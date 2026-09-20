@@ -11,7 +11,7 @@ import time
 from typing import Callable
 
 from agents.tools import lookup_kb, search_web, TOOL_SCHEMAS
-from agents.prompts import SYSTEM_PROMPT
+from agents.prompts import system_prompt
 
 logger = logging.getLogger("wellness.core")
 
@@ -103,7 +103,7 @@ def run_turn(
 
     history = get_history(session_id)
     messages = (
-        [{"role": "system", "content": SYSTEM_PROMPT}]
+        [{"role": "system", "content": system_prompt()}]
         + history
         + [{"role": "user", "content": user_message}]
     )

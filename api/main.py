@@ -137,6 +137,19 @@ def _fetch_available_models(provider: str, key: str) -> list[str]:
     return []
 
 
+@app.get("/agents")
+def list_agents():
+    """Cheap, no upstream calls: what each agent is currently wired to. The UI
+    labels itself from this so the displayed model can't drift from config.
+    """
+    return {
+        "agents": [
+            {"name": name, "model": cfg["model"], "provider": cfg["provider"]}
+            for name, cfg in AGENTS.items()
+        ]
+    }
+
+
 @app.get("/available-models")
 def available_models():
     """Live model list per provider, for filling in OSS_MODEL / FRONTIER_MODEL
