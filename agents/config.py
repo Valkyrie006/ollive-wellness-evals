@@ -5,7 +5,9 @@ what satisfies the "keep the architecture fixed" requirement.
 
 All three are free-tier, no-card services (see plan.md, Decisions #3-#5):
 - OSS assistant:  openai/gpt-oss-20b via Groq (open weights)
-- Frontier assistant: Gemini Flash via Google AI Studio
+- Frontier assistant: Gemini Flash via Google AI Studio (gemini-flash-latest;
+  the pinned gemini-3.6-flash measured 62s p50 and a 48% error rate under
+  load, so the alias is the more reliable default)
 - Eval judge: qwen3.8-27b via Groq - deliberately a third model family, so
   the judge never scores a model from its own family and risks
   self-preference bias

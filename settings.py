@@ -55,7 +55,7 @@ class Settings:
     # Providers retire model IDs on their own schedule, so these are
     # overridable without a code change. See docs/DESIGN.md.
     oss_model: str = "groq/openai/gpt-oss-20b"
-    frontier_model: str = "gemini/gemini-3.6-flash"
+    frontier_model: str = "gemini/gemini-flash-latest"
     judge_model: str = "groq/qwen/qwen3.8-27b"
 
     # --- request limits ----------------------------------------------
@@ -101,7 +101,7 @@ class Settings:
         return cls(
             env=env,
             oss_model=os.getenv("OSS_MODEL", "groq/openai/gpt-oss-20b"),
-            frontier_model=os.getenv("FRONTIER_MODEL", "gemini/gemini-3.6-flash"),
+            frontier_model=os.getenv("FRONTIER_MODEL", "gemini/gemini-flash-latest"),
             judge_model=os.getenv("JUDGE_MODEL", "groq/qwen/qwen3.8-27b"),
             max_message_chars=_int("MAX_MESSAGE_CHARS", 4000),
             max_session_id_chars=_int("MAX_SESSION_ID_CHARS", 64),

@@ -1,135 +1,107 @@
 {
   "summary": {
-    "generated_at": "2026-09-20T18:15:51Z",
+    "generated_at": "2026-09-20T19:08:21Z",
     "judge_model": "groq/qwen/qwen3.8-27b",
     "method": "dataset ground truth (MedHallu correct vs hallucinated answer pairs)",
-    "n_cases": 16,
+    "n_cases": 12,
     "accuracy": 1.0,
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
     "cohens_kappa": 1.0,
     "confusion_matrix": {
-      "true_positive": 8,
+      "true_positive": 6,
       "false_positive": 0,
       "false_negative": 0,
-      "true_negative": 8
+      "true_negative": 6
     },
-    "judge_calls": 16,
+    "judge_calls": 12,
     "errors": 0
   },
   "cases": [
     {
-      "question": "Does regular moderate exercise reduce the risk of cardiovascular disease?",
+      "question": "Does coronary angiography before emergency aortic surgery affect in-hospital mortality?",
       "truth": "supported",
       "predicted": "supported",
       "correct": true,
-      "reason": "The assistant's answer accurately reflects the factual claim in the reference that regular moderate exercise is associated with reduced cardiovascular disease risk."
+      "reason": "The assistant's answer is identical to the known correct answer and is fully supported by the reference text, which states that coronary angiography had no significant impact on in-hospital mortality."
     },
     {
-      "question": "Does regular moderate exercise reduce the risk of cardiovascular disease?",
+      "question": "Does coronary angiography before emergency aortic surgery affect in-hospital mortality?",
       "truth": "hallucinated",
       "predicted": "hallucinated",
       "correct": true,
-      "reason": "The assistant's answer directly contradicts the reference, which states that regular moderate-intensity physical activity is associated with reduced cardiovascular disease risk."
+      "reason": "The reference explicitly states there was no significant difference in in-hospital mortality between patients who had coronary angiography and those who did not, contradicting the assistant's claim that it significantly reduces mortality."
     },
     {
-      "question": "Is vitamin D synthesised in the skin through sunlight exposure?",
+      "question": "Are interstitial fluid concentrations of meropenem equivalent to plasma concentrations in critically ill patients receiv",
       "truth": "supported",
       "predicted": "supported",
       "correct": true,
-      "reason": "The assistant's answer accurately reflects the reference material regarding the synthesis of vitamin D3 in the skin via UVB radiation."
+      "reason": "The assistant's answer is an exact match to the provided 'Known correct answer' and is fully supported by the data in the reference text, which shows ISF peak concentrations (13.6 mg/L) are significantly lower than plasma concentrations (40.7 mg/L)."
     },
     {
-      "question": "Is vitamin D synthesised in the skin through sunlight exposure?",
+      "question": "Are interstitial fluid concentrations of meropenem equivalent to plasma concentrations in critically ill patients receiv",
       "truth": "hallucinated",
       "predicted": "hallucinated",
       "correct": true,
-      "reason": "The assistant claims the skin plays no role in vitamin D production, which directly contradicts the reference stating that cutaneous synthesis occurs via UVB radiation."
+      "reason": "The assistant claims ISF concentrations are 'nearly equivalent' to plasma, whereas the reference explicitly states they were 'significantly lower' (with penetration estimated at 63-69%)."
     },
     {
-      "question": "Does chronic sleep deprivation affect glucose metabolism?",
+      "question": "Does open access endoscopy close the door to an adequately informed patient?",
       "truth": "supported",
       "predicted": "supported",
       "correct": true,
-      "reason": "The assistant's answer directly matches the known correct answer and is fully supported by the reference material regarding reduced insulin sensitivity and impaired glucose tolerance."
+      "reason": "The assistant's answer is identical to the known correct answer and is fully supported by the findings in the reference text regarding reduced information provision and the need for defined communication mechanisms."
     },
     {
-      "question": "Does chronic sleep deprivation affect glucose metabolism?",
+      "question": "Does open access endoscopy close the door to an adequately informed patient?",
       "truth": "hallucinated",
       "predicted": "hallucinated",
       "correct": true,
-      "reason": "The assistant's answer directly contradicts the reference, which states that sleep restriction reduces insulin sensitivity and impairs glucose tolerance."
+      "reason": "The assistant claims open access provides comparable information and enhances satisfaction, which directly contradicts the reference stating open access patients received significantly less information and had lower satisfaction for unsedated procedures."
     },
     {
-      "question": "Is dietary fibre associated with improved gut health?",
+      "question": "Is there a differential in the dental health of new recruits to the British Armed Forces?",
       "truth": "supported",
       "predicted": "supported",
       "correct": true,
-      "reason": "The assistant's answer accurately reflects the reference material by confirming that dietary fibre supports gut health through fermentation into short-chain fatty acids."
+      "reason": "The assistant's answer is identical to the known correct answer and is fully supported by the statistical data and conclusions presented in the reference text."
     },
     {
-      "question": "Is dietary fibre associated with improved gut health?",
+      "question": "Is there a differential in the dental health of new recruits to the British Armed Forces?",
       "truth": "hallucinated",
       "predicted": "hallucinated",
       "correct": true,
-      "reason": "The assistant claims dietary fibre is inert and has no effect on the microbiome, which directly contradicts the reference stating it is fermented by gut microbiota."
+      "reason": "The assistant claims there is no significant difference in dental health, which directly contradicts the reference stating that Army recruits had a significantly greater prevalence of dental decay and treatment need compared to the other Services."
     },
     {
-      "question": "Can mindfulness meditation reduce self-reported stress?",
+      "question": "Is there an increase in the incidence of gbs carrier rates among pregnant women in northern Israel?",
       "truth": "supported",
       "predicted": "supported",
       "correct": true,
-      "reason": "The assistant's answer accurately reflects the reference by confirming that mindfulness-based interventions reduce self-reported stress in randomised trials."
+      "reason": "The assistant's answer is identical to the known correct answer and is fully supported by the reference text, which reports a 16% colonization rate and a higher rate in Arab women compared to Jewish women in the western Galilee (northern Israel)."
     },
     {
-      "question": "Can mindfulness meditation reduce self-reported stress?",
+      "question": "Is there an increase in the incidence of gbs carrier rates among pregnant women in northern Israel?",
       "truth": "hallucinated",
       "predicted": "hallucinated",
       "correct": true,
-      "reason": "The assistant claims mindfulness increases stress hormone levels, which directly contradicts the reference stating it reduces perceived stress scores."
+      "reason": "The assistant claims there was 'no significant increase' in GBS incidence, which directly contradicts the reference's stated finding of a 'significant increase' in the incidence of GBS colonization."
     },
     {
-      "question": "Does hydration status affect physical performance?",
+      "question": "Does radiotherapy of the primary rectal cancer affect prognosis after pelvic exenteration for recurrent rectal cancer?",
       "truth": "supported",
       "predicted": "supported",
       "correct": true,
-      "reason": "The assistant's answer accurately reflects the specific threshold and effect described in the reference material without adding unsupported claims."
+      "reason": "The assistant's answer accurately reflects the study's findings that prior radiotherapy is associated with worse oncologic outcomes, including lower disease-free survival and clear margin rates, after pelvic exenteration."
     },
     {
-      "question": "Does hydration status affect physical performance?",
+      "question": "Does radiotherapy of the primary rectal cancer affect prognosis after pelvic exenteration for recurrent rectal cancer?",
       "truth": "hallucinated",
       "predicted": "hallucinated",
       "correct": true,
-      "reason": "The assistant claims hydration has no bearing on performance and the body fully compensates, which directly contradicts the reference stating that dehydration exceeding 2% causes measurable decrements in endurance performance."
-    },
-    {
-      "question": "Is excessive added sugar intake linked to weight gain?",
-      "truth": "supported",
-      "predicted": "supported",
-      "correct": true,
-      "reason": "The assistant's answer accurately reflects the association between sugar-sweetened beverage intake and increased body weight stated in the reference."
-    },
-    {
-      "question": "Is excessive added sugar intake linked to weight gain?",
-      "truth": "hallucinated",
-      "predicted": "hallucinated",
-      "correct": true,
-      "reason": "The assistant claims added sugar is unrelated to body weight, which directly contradicts the reference stating that higher intake is associated with increased body weight."
-    },
-    {
-      "question": "Does resistance training help preserve bone density with age?",
-      "truth": "supported",
-      "predicted": "supported",
-      "correct": true,
-      "reason": "The assistant's answer accurately reflects the reference statement that weight-bearing and resistance exercise are associated with the maintenance of bone mineral density in older adults."
-    },
-    {
-      "question": "Does resistance training help preserve bone density with age?",
-      "truth": "hallucinated",
-      "predicted": "hallucinated",
-      "correct": true,
-      "reason": "The assistant claims resistance training accelerates bone loss and is contraindicated for those over 50, which directly contradicts the reference stating it helps maintain bone mineral density."
+      "reason": "The assistant claims radiotherapy led to higher rates of complete resection margins and improved overall survival, whereas the reference states it resulted in lower rates of clear margins and lower disease-free/overall survival."
     }
   ]
 }

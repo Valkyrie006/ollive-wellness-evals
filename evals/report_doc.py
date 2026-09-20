@@ -25,6 +25,7 @@ AGENT_LABEL = {"oss": "Open-source", "frontier": "Frontier"}
 PRICING = {
     "groq/openai/gpt-oss-20b": {"in": 0.075, "out": 0.30, "note": "free tier, no card"},
     "gemini/gemini-3.6-flash": {"in": 0.00, "out": 0.00, "note": "free tier (AI Studio)"},
+    "gemini/gemini-flash-latest": {"in": 0.00, "out": 0.00, "note": "free tier (AI Studio)"},
     "groq/qwen/qwen3.8-27b": {"in": 0.80, "out": 4.00, "note": "free tier, preview"},
 }
 
@@ -48,6 +49,10 @@ def _pct(v) -> str:
     return "—" if v is None else f"{v * 100:.0f}%"
 
 
+def _n_text(n: dict) -> str:
+    return ", ".join(f"{k} n={v}" for k, v in (n or {}).items())
+
+
 def derive_findings(scorecard: dict, judge: Optional[dict],
                     cross: Optional[dict], guarded: Optional[dict]) -> list:
     """Reads the numbers and states what follows from them."""
@@ -69,19 +74,14 @@ def derive_findings(scorecard: dict, judge: Optional[dict],
                         f"{_pct(oss['hallucination'])} (OSS) vs {_pct(fr['hallucination'])} "
                         f"(frontier) — a {abs(d)*100:.0f}-point gap against the {worse} agent."))
 
-    # safety, split
-    for key, label in (("attack_success_rate", "Attack success"),
-                       ("over_refusal_rate", "Over-refusal")):
-        o, f = oss.get(key), fr.get(key)
-        if o is None and f is None:
-            continue
-        if (o or 0) == 0 and (f or 0) == 0:
-            out.append((f"{label}: clean on both.",
-                        "No failures observed on this sub-axis at this sample size."))
-        else:
-            out.append((f"{label}: {_pct(o)} OSS / {_pct(f)} frontier.",
-                        "These are opposite failures and are reported separately on purpose — "
-                        "an agent that refuses everything scores perfectly on one and fails the other."))
+    # safety - one finding covering both sub-axes, since they only mean
+    # anything read together
+    asr_o, orr_o = oss.get("attack_success_rate"), oss.get("over_refusal_rate")
+    if asr_o is not None or orr_o is not None:
+        out.append(("Safety splits two ways.",
+                    f"Open-source: {_pct(asr_o)} attack success, {_pct(orr_o)} over-refusal. "
+                    "These are opposite failures, never averaged — an agent that refuses "
+                    "everything scores perfectly on the first and fails the second."))
 
     # latency
     if oss.get("latency_ms_p50") and fr.get("latency_ms_p50"):
@@ -92,16 +92,29 @@ def derive_findings(scorecard: dict, judge: Optional[dict],
     # judge trust
     if judge and judge.get("cohens_kappa") is not None:
         k = judge["cohens_kappa"]
-        verdict = ("substantial agreement — the scores above can be read at face value"
-                   if k >= 0.6 else
-                   "below substantial agreement — treat the scores above as indicative only")
-        out.append((f"Judge calibration κ = {k:.2f}.",
-                    f"Measured on {judge.get('n_cases')} items with known labels; {verdict}."))
+        n_cases = judge.get("n_cases")
+        if k >= 0.99:
+            # A perfect score on a small, unambiguous set is weak evidence of
+            # general reliability. Claiming otherwise is the kind of overclaim
+            # that makes a whole report untrustworthy.
+            detail = (f"Correct on all {n_cases} labelled cases — but those are "
+                      "unambiguous correct/hallucinated pairs, so this shows the judge "
+                      "handles the easy case, not that it is reliable in general.")
+        elif k >= 0.6:
+            detail = (f"Substantial agreement over {n_cases} labelled cases; the "
+                      "hallucination figures can be read at face value.")
+        else:
+            detail = (f"Below substantial agreement over {n_cases} cases — treat every "
+                      "judged score above as indicative only.")
+        out.append((f"Judge calibration κ = {k:.2f} on hallucination.", detail))
 
     if cross and cross.get("agreement") is not None:
-        out.append((f"Judge vs rule-based classifier agree {_pct(cross['agreement'])} on safety.",
-                    "Two independent mechanisms disagreeing is evidence at least one is "
-                    "unreliable; the safety numbers carry that caveat."))
+        out.append((f"…but only {_pct(cross['agreement'])} agreement with the rule-based "
+                    "classifier on safety.",
+                    f"{cross.get('disagreements')} of {cross.get('n')} responses labelled "
+                    "differently by two independent mechanisms. The judge is calibrated for "
+                    "hallucination, not demonstrably for safety — the safety figures are the "
+                    "least trustworthy numbers here."))
 
     if guarded:
         g_oss = guarded.get("agents", {}).get("oss", {})
@@ -151,9 +164,9 @@ def derive_recommendations(scorecard: dict, judge: Optional[dict], cross: Option
         recs.append("Reconcile the LLM judge with the rule-based classifier on safety. "
                     "Their disagreement rate is the single biggest threat to these numbers.")
 
-    n = scorecard.get("items_per_axis", {})
-    recs.append(f"Scale the test sets before any go/no-go decision. At {n} items per axis, "
-                "a single item moves a rate by several points.")
+    recs.append("Scale the test sets before any go/no-go decision. At "
+                f"{_n_text(scorecard.get('items_per_axis'))}, a single item moves a rate "
+                "by several points.")
     return recs
 
 
@@ -186,23 +199,32 @@ def build_html(out_path: Optional[str] = None) -> Optional[str]:
         rows += (f"<tr><td>{label}</td><td class='num'>{fmt(o) if o else '—'}</td>"
                  f"<td class='num'>{fmt(f) if f else '—'}</td></tr>")
 
+    # Cost + latency table (bonus deliverable). Latency is measured; the
+    # per-token prices are the providers' published list rates, shown for
+    # what the same workload would cost off the free tier.
     cost_rows = ""
-    for agent, cfg_key in (("oss", scorecard.get("agents_models", {}).get("oss")),
-                           ("frontier", scorecard.get("agents_models", {}).get("frontier"))):
-        model = cfg_key or ""
+    for agent in ("oss", "frontier"):
+        a = agents.get(agent, {})
+        model = (scorecard.get("agents_models") or {}).get(agent, "")
         price = PRICING.get(model, {})
-        lat = agents.get(agent, {}).get("latency_ms_p50")
-        cost_rows += (f"<tr><td>{AGENT_LABEL[agent]}</td><td class='mono'>{model or '—'}</td>"
-                      f"<td class='num'>{lat/1000:.1f}s</td>" if lat else
-                      f"<tr><td>{AGENT_LABEL[agent]}</td><td class='mono'>{model or '—'}</td>"
-                      f"<td class='num'>—</td>")
-        cost_rows += (f"<td class='num'>${price.get('in', 0):.3f}</td>"
-                      f"<td class='num'>${price.get('out', 0):.3f}</td>"
-                      f"<td>{price.get('note', '—')}</td></tr>")
+        p50 = a.get("latency_ms_p50")
+        p95 = a.get("latency_ms_p95")
+        cost_rows += (
+            f"<tr><td>{AGENT_LABEL[agent]}</td>"
+            f"<td class='mono'>{model or '—'}</td>"
+            f"<td class='num'>{f'{p50/1000:.1f}s' if p50 else '—'}</td>"
+            f"<td class='num'>{f'{p95/1000:.1f}s' if p95 else '—'}</td>"
+            f"<td class='num'>${price.get('in', 0):.3f}</td>"
+            f"<td class='num'>${price.get('out', 0):.3f}</td>"
+            f"<td>{price.get('note', '—')}</td></tr>")
 
     findings_html = "".join(
         f"<li><strong>{t}</strong> {d}</li>" for t, d in findings)
     recs_html = "".join(f"<li>{r}</li>" for r in recs)
+
+    note = scorecard.get("frontier_note")
+    frontier_note_html = (f"<div class='note'><strong>Frontier caveat.</strong> {note}</div>"
+                          if note else "")
 
     valid_banner = ""
     if scorecard.get("valid") is False:
@@ -237,6 +259,8 @@ def build_html(out_path: Optional[str] = None) -> Optional[str]:
   li {{ margin-bottom: 3px; }}
   .warn {{ background: #fdecea; border: 1px solid #f3c9c4; padding: 5px 7px;
            border-radius: 4px; margin-bottom: 7px; font-size: 8.2pt; }}
+  .note {{ background: #fdf4e3; border: 1px solid #f0e0bc; padding: 5px 7px;
+           border-radius: 4px; margin-top: 6px; font-size: 8pt; }}
   footer {{ margin-top: 8px; padding-top: 5px; border-top: .5px solid #e1e0d9;
             color: #898781; font-size: 7.2pt; }}
 </style></head><body>
@@ -246,7 +270,7 @@ def build_html(out_path: Optional[str] = None) -> Optional[str]:
   <div class="sub">Open-source vs frontier model on an identical architecture ·
     {scorecard.get('generated_at', '')} ·
     judge: {scorecard.get('judge_model', '')} ·
-    {scorecard.get('items_per_axis', {})} items per axis</div>
+    {_n_text(scorecard.get('items_per_axis'))}</div>
 </header>
 
 {valid_banner}
@@ -267,6 +291,15 @@ def build_html(out_path: Optional[str] = None) -> Optional[str]:
     {f'<img src="data:image/png;base64,{judge_b64}" alt="Judge calibration" style="margin-top:6px">' if judge_b64 else ''}
   </div>
 </div>
+
+<h2>Cost &amp; latency (open-source deployment)</h2>
+<table>
+  <tr><th>Agent</th><th>Model</th><th style="text-align:right">p50</th>
+      <th style="text-align:right">p95</th><th style="text-align:right">$/1M in</th>
+      <th style="text-align:right">$/1M out</th><th>Tier used</th></tr>
+  {cost_rows}
+</table>
+{frontier_note_html}
 
 <h2>Recommendations</h2>
 <ul>{recs_html}</ul>

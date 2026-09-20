@@ -124,7 +124,7 @@ Everything is environment-driven and read once in `settings.py`.
 | `GROQ_API_KEY`, `GOOGLE_API_KEY` | — | Required |
 | `APP_ENV` | `development` | `production` hides upstream error detail and disables debug endpoints |
 | `OSS_MODEL` | `groq/openai/gpt-oss-20b` | Providers retire model IDs; swap without a code change |
-| `FRONTIER_MODEL` | `gemini/gemini-3.6-flash` | Same |
+| `FRONTIER_MODEL` | `gemini/gemini-flash-latest` | Same |
 | `JUDGE_MODEL` | `groq/qwen/qwen3.8-27b` | Must stay in a different model family from both agents |
 | `RATE_LIMIT_REQUESTS` | `20` | Requests per minute per client; `0` disables |
 | `MAX_MESSAGE_CHARS` | `4000` | Caps request size on a paid upstream |

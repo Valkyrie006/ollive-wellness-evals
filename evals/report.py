@@ -49,27 +49,14 @@ def _load(name: str):
         return json.load(f)
 
 
-def _rounded_bars(ax, patches, radius_frac=0.45):
-    """matplotlib has no rounded bar ends, so each bar is redrawn as a
-    rounded patch. Purely cosmetic - it makes short bars read as marks
-    rather than as slivers of the axis."""
-    from matplotlib.patches import FancyBboxPatch
+def build_comparison_chart(scorecard=None, out_path=None):
+    """Grouped horizontal bars, one row per metric.
 
-    for p in patches:
-        x, y = p.get_xy()
-        w, h = p.get_width(), p.get_height()
-        if w <= 0:
-            continue
-        p.set_visible(False)
-        r = min(h * radius_frac, w / 2)
-        ax.add_patch(FancyBboxPatch(
-            (x, y), max(w - r, 0.0001), h,
-            boxstyle=f"round,pad=0,rounding_size={r}",
-            facecolor=p.get_facecolor(), edgecolor="none",
-            mutation_aspect=1, zorder=3, clip_on=False))
-
-
-def build_comparison_chart(scorecard=None, out_path=None) -> str | None:
+    Missing data is drawn as an explicit "no data" annotation, never as a
+    zero bar. Rendering an absent measurement as 0% would show an agent
+    with no results as flawless, which is the most damaging thing a chart
+    like this can do.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -81,49 +68,57 @@ def build_comparison_chart(scorecard=None, out_path=None) -> str | None:
     agents = [a for a in ("oss", "frontier") if a in scorecard["agents"]]
     out_path = out_path or os.path.join(RESULTS_DIR, "comparison.png")
 
-    rows = [(key, label) for key, label in METRICS
-            if any(scorecard["agents"][a].get(key) is not None for a in agents)]
-
-    fig, ax = plt.subplots(figsize=(9.2, 4.6), dpi=200)
+    rows = list(METRICS)
+    fig, ax = plt.subplots(figsize=(9.6, 4.4), dpi=200)
     fig.patch.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
 
     y = np.arange(len(rows))
-    height = 0.34
-    gap = 0.02  # 2px-equivalent surface gap between adjacent bars
+    height = 0.32
+    gap = 0.04
 
     for i, agent in enumerate(agents):
-        offset = (i - (len(agents) - 1) / 2) * (height + gap)
-        vals = [scorecard["agents"][agent].get(k) or 0.0 for k, _ in rows]
-        bars = ax.barh(y - offset, vals, height=height,
-                       color=SERIES[agent], label=LABELS[agent], zorder=3)
-        _rounded_bars(ax, bars)
-        for yi, v in zip(y - offset, vals):
-            ax.text(v + 0.018, yi, f"{v:.0%}", va="center", ha="left",
-                    fontsize=9, color=INK_SECONDARY, zorder=4)
+        offset = ((len(agents) - 1) / 2 - i) * (height + gap)
+        for yi, (key, _label) in zip(y, rows):
+            v = scorecard["agents"][agent].get(key)
+            pos = yi + offset
+            if v is None:
+                ax.text(0.012, pos, "no data", va="center", ha="left",
+                        fontsize=8, style="italic", color=INK_MUTED, zorder=4)
+                continue
+            ax.barh(pos, v, height=height, color=SERIES[agent], zorder=3,
+                    label=LABELS[agent] if yi == 0 else None)
+            ax.text(v + 0.014, pos, f"{v:.0%}", va="center", ha="left",
+                    fontsize=9.5, color=INK_SECONDARY, zorder=4)
 
     ax.set_yticks(y)
     ax.set_yticklabels([label for _, label in rows], fontsize=10.5, color=INK_PRIMARY)
     ax.invert_yaxis()
-    ax.set_xlim(0, 1.12)
+    ax.set_xlim(0, 1.1)
     ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
     ax.set_xticklabels(["0%", "25%", "50%", "75%", "100%"], fontsize=9, color=INK_MUTED)
     ax.xaxis.grid(True, color=GRIDLINE, linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
-    ax.yaxis.grid(False)
     for side in ("top", "right", "bottom"):
         ax.spines[side].set_visible(False)
     ax.spines["left"].set_color(BASELINE)
     ax.tick_params(length=0)
 
-    ax.set_title("Failure rate by axis — lower is better",
-                 fontsize=13, color=INK_PRIMARY, pad=14, loc="left", fontweight="600")
-    ax.text(0, 1.055, f"{scorecard['items_per_axis']} items per axis · "
-                      f"judge: {scorecard['judge_model']}",
+    n = scorecard.get("items_per_axis", {})
+    n_text = ", ".join(f"{k} n={v}" for k, v in n.items())
+    ax.set_title("Failure rate by axis \u2014 lower is better",
+                 fontsize=13.5, color=INK_PRIMARY, pad=26, loc="left", fontweight="600")
+    ax.text(0, 1.045,
+            f"{n_text} \u00b7 judge {scorecard.get('judge_model', '')}",
             transform=ax.transAxes, fontsize=8.5, color=INK_MUTED)
-    leg = ax.legend(loc="lower right", frameon=False, fontsize=9.5, ncol=2)
-    for text in leg.get_texts():
-        text.set_color(INK_SECONDARY)
+
+    handles, labels_ = ax.get_legend_handles_labels()
+    if handles:
+        leg = ax.legend(handles, labels_, loc="upper right",
+                        bbox_to_anchor=(1.0, 1.13), frameon=False,
+                        fontsize=9.5, ncol=2, handlelength=1.2, handleheight=0.9)
+        for text in leg.get_texts():
+            text.set_color(INK_SECONDARY)
 
     fig.tight_layout()
     fig.savefig(out_path, facecolor=SURFACE, bbox_inches="tight")
