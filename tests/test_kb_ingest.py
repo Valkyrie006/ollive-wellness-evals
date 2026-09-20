@@ -1,6 +1,6 @@
 import chromadb
 
-from kb.ingest import load_chunks, build_kb, DEFAULT_SOURCE_DIR
+from kb.ingest import DEFAULT_SOURCE_DIR, build_kb, load_chunks
 from tests.fakes import fake_embed_fn
 
 

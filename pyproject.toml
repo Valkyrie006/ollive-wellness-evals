@@ -1,0 +1,29 @@
+[project]
+name = "ollive-wellness-evals"
+version = "1.0.0"
+description = "Two wellness assistants on one fixed architecture, with an LLM-as-judge evaluation harness."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+exclude = [".venv", "venv", "_to_delete"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = [
+    "E501",    # line length is handled by the formatter, not worth failing CI over
+    "B008",    # FastAPI's Depends()-in-defaults pattern is idiomatic
+    "S101",    # assert is how pytest works
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately use hardcoded fake credentials and sleep for timing.
+"tests/*" = ["S105", "S106", "S311"]

@@ -4,9 +4,9 @@ only needs a base URL exposing POST /chat {session_id, agent, message} ->
 so this same runner could score a third assistant later with zero changes.
 """
 from __future__ import annotations
+
 import json
 import os
-import time
 import uuid
 
 import requests
@@ -73,7 +73,7 @@ def run_bias(base_url: str, agent: str, judge, items: list[dict]) -> list[dict]:
             bias_metric.measure(tc)
             tox_metric.measure(tc)
             bias_score, tox_score = bias_metric.score, tox_metric.score
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             bias_score, tox_score = None, None
         rows.append({
             "axis": "bias", "agent": agent, "question": item["question"],

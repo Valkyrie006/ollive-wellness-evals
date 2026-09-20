@@ -1,112 +1,120 @@
-# Wellness Assistant + Evals Platform (1-Day POC)
+# Wellness Assistant + Evals Platform
 
-Two deployments of the same wellness-assistant architecture (an OSS model and
-a frontier model, both free-tier), plus a lean evals platform that scores
-both on hallucination, bias/harmful outputs, and content safety. Full
-design rationale is in [`plan.md`](plan.md); the step-by-step build log is in
-[`implementation_plan.md`](implementation_plan.md).
+Two AI wellness assistants — one open-weights, one frontier — running on a
+**byte-identical architecture**, plus a harness that scores both on
+hallucination, bias, and content safety, and then checks whether the judge
+doing the scoring can be trusted.
 
-## Setup
+The point of the project is the comparison. If the two agents differ in any
+way other than the model ID, the evaluation measures the scaffolding rather
+than the models — so the prompt, the tool schemas, the tool-calling loop,
+the memory handling, and the retry logic are shared code, and
+`agents/config.py` is the only file that knows they're different.
 
-1. **Get two free API keys (no card needed for either):**
-   - Groq: https://console.groq.com → API Keys → create one → `GROQ_API_KEY`
-   - Google AI Studio: https://aistudio.google.com/apikey → create one → `GOOGLE_API_KEY`
-2. `cp .env.example .env` and fill in both keys.
-3. `pip install -r requirements.txt`
-4. Run the API (also serves the chat UI at `/`):
-   ```
-   uvicorn api.main:app --reload
-   ```
-   Open http://localhost:8000 in a browser, pick "OSS" or "Frontier" from the
-   dropdown, and chat. Both hit the exact same `agents/core.py` tool-calling
-   loop - only the model config differs (see `plan.md`, Section 2).
-5. Prepare the eval datasets (one-time, needs internet + optionally a
-   Hugging Face token for gated datasets):
-   ```
-   python -m evals.datasets.prepare
-   ```
-6. With the API still running in another terminal, run the evals:
-   ```
-   python -m evals.runner
-   python -m evals.report
-   ```
-   This writes `results/raw.jsonl`, `results/scorecard.json`, and
-   `results/chart.png`.
-7. Judge meta-check (assessing the judge's own quality against a small
-   hand-labeled set):
-   ```
-   python -m evals.meta_check sample
-   # hand-label evals/gold_labels_template.jsonl, save as evals/gold_labels.jsonl
-   ```
+---
 
-## Architecture decisions
+## What's in here
 
-See `plan.md` Section 2 for the full list with reasoning. Summary:
-- No agent framework (LangGraph/LangChain) - a hand-rolled tool-calling loop
-  is the entire "architecture," kept byte-identical across both models.
-- `litellm` unifies the two providers' tool-call formats so the loop code
-  never branches on which model is active.
-- OSS assistant: **Llama-3.1-8B-Instant via Groq** (fully free, no card,
-  perpetual free tier, reliable native tool-calling).
-- Frontier assistant: **Gemini Flash via Google AI Studio** (fully free, no
-  card).
-- Eval judge: **`gpt-oss-20b` via Groq** - a third model family, distinct
-  from both assistants, to avoid the judge favoring a response just because
-  it shares a family with it.
-- Knowledge base: the 9 provided wellness `.md` files, paragraph-chunked,
-  embedded with `sentence-transformers` (`all-MiniLM-L6-v2`), held in an
-  in-memory Chroma collection (rebuilt on every process start - no
-  persistence needed for a same-day demo).
+| Piece | Where | What it does |
+|---|---|---|
+| Fixed agent architecture | `agents/core.py` | One tool-calling loop, imported unchanged by both agents |
+| Agent configs | `agents/config.py` | The *only* difference between the two agents |
+| Tools | `agents/tools.py` | `lookup_kb` (Chroma over the wellness KB) and `search_web` (DuckDuckGo) |
+| Knowledge base | `kb/` | 9 wellness guides, paragraph-chunked and embedded |
+| HTTP API + UI | `api/`, `ui/` | FastAPI backend, single-file chat interface |
+| Evals harness | `evals/` | Scores both agents on three axes, then meta-evaluates the judge |
 
-## Trade-offs made
+## Quick start
 
-- **~15 test items per axis**, not hundreds - a directional signal, not a
-  statistically rigorous benchmark. Good enough to compare two assistants at
-  POC depth, not to publish a leaderboard.
-- **Bias/safety scoring reuses DeepEval's `BiasMetric`/`ToxicityMetric`**
-  rather than purpose-built stereotype or unsafe-response classifiers - an
-  accepted gap given the time budget (see `plan.md` Decision #7).
-- **No persistence** - session memory and the KB vector store are in-process
-  and reset when the server restarts.
-- **Single labeler, no formal Cohen's kappa** for the judge meta-check - a
-  simple % agreement instead.
-- **No multi-turn adversarial jailbreaks** - the safety test set is
-  single-shot prompts only.
+```bash
+git clone https://github.com/Valkyrie006/ollive-wellness-evals.git
+cd ollive-wellness-evals
 
-## What we'd improve with more time
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
-- A larger, independently-labeled gold set (2+ labelers) with real
-  inter-rater and judge-vs-human kappa, not just % agreement.
-- An ensemble judge (2-3 model families voting) instead of a single judge
-  model, to further reduce idiosyncratic judge bias.
-- Purpose-built classifiers for stereotype/toxicity detection as a second
-  signal alongside the LLM judge.
-- Multi-turn adversarial safety tests, not just single-shot jailbreak prompts.
-- Guardrails added directly in response to the eval results (regex/refusal
-  filter on whichever axis scores worst), with a before/after re-run to
-  prove they work.
-- A public deployment of the OSS assistant (e.g. a Hugging Face Space) and a
-  recorded demo.
-
-## Repo layout
-
-```
-agents/       shared tool-calling core, tools, prompt, model configs
-kb/           knowledge-base source files + ingestion
-api/          FastAPI backend
-ui/           minimal HTML/JS chat page
-evals/        datasets, judge, runner, refusal checker, meta-check, report
-results/      eval run outputs (raw.jsonl, scorecard.json, chart.png)
-tests/        offline-testable unit/integration tests (see below)
+cp .env.example .env     # then add your two free API keys
+uvicorn api.main:app --reload --port 8000
 ```
 
-## Testing note
+Open <http://localhost:8000>. First start takes an extra minute while the
+embedding model downloads.
 
-This POC was built and unit-tested in a sandboxed environment with no
-general internet access (only package registries reachable) - so the tests
-under `tests/` verify all the control-flow logic (KB chunking, the
-tool-calling loop, retry-on-malformed-JSON, the FastAPI routes, eval
-aggregation, refusal classification) using fakes/mocks in place of the real
-Groq/Gemini/Hugging Face/DuckDuckGo network calls. See `tests/README.md` for
-exactly what's covered by mocks vs. what still needs a real run with live
-API keys and internet access.
+Both providers are **free tier, no card required**:
+[Groq](https://console.groq.com/keys) and
+[Google AI Studio](https://aistudio.google.com/apikey).
+
+### Docker
+
+```bash
+export GROQ_API_KEY=... GOOGLE_API_KEY=...
+docker compose up --build
+```
+
+The image bakes in the embedding model, so containers start without
+reaching Hugging Face.
+
+## Running the evaluation
+
+```bash
+python evals/datasets/prepare.py                                  # sample the HF datasets
+python -m evals.runner --base-url http://localhost:8000 --agents oss frontier
+python evals/report.py                                            # writes results/chart.png
+```
+
+## Configuration
+
+Everything is environment-driven and read once in `settings.py`.
+
+| Variable | Default | Why you'd change it |
+|---|---|---|
+| `GROQ_API_KEY`, `GOOGLE_API_KEY` | — | Required |
+| `APP_ENV` | `development` | `production` hides upstream error detail and disables debug endpoints |
+| `OSS_MODEL` | `groq/openai/gpt-oss-20b` | Providers retire model IDs; swap without a code change |
+| `FRONTIER_MODEL` | `gemini/gemini-3.6-flash` | Same |
+| `JUDGE_MODEL` | `groq/qwen/qwen3.8-27b` | Must stay in a different model family from both agents |
+| `RATE_LIMIT_REQUESTS` | `20` | Requests per minute per client; `0` disables |
+| `MAX_MESSAGE_CHARS` | `4000` | Caps request size on a paid upstream |
+| `SESSION_TTL_SECONDS` | `3600` | How long short-term memory survives |
+| `ENABLE_DEBUG_ENDPOINTS` | on outside prod | `/diagnostics`, `/available-models`, `/docs` |
+| `CORS_ORIGINS` | none | Comma-separated, only if the UI is served elsewhere |
+
+## API
+
+| Route | Purpose |
+|---|---|
+| `POST /chat` | `{session_id, agent, message}` → answer, tool calls, latency |
+| `POST /reset` | Clears a session's short-term memory |
+| `GET /health` | Liveness — dependency-free, safe for orchestrators |
+| `GET /ready` | Readiness — fails if the KB didn't load |
+| `GET /agents` | What each agent is currently wired to |
+| `GET /config` | What the UI needs to render itself |
+| `GET /diagnostics` | Per-dependency self-check *(debug only)* |
+| `GET /available-models` | Live model list from each provider *(debug only)* |
+
+`/diagnostics` is the one to reach for when something breaks: it pings both
+providers, the KB, the embedder, and web search, and reports what each one
+actually said. When a model ID has been retired it also attaches the
+provider's current model list, so the fix is visible at the point of
+failure.
+
+## Tests
+
+```bash
+python -m pytest tests/ -q      # 36 tests, no network, no API keys
+```
+
+Every network dependency is faked, so the suite runs anywhere and CI needs
+no secrets. `tests/README.md` records exactly what that does and doesn't
+prove.
+
+## Design decisions
+
+Every non-obvious choice, the alternatives considered, and what each one
+would cost is written up in **[docs/DESIGN.md](docs/DESIGN.md)** — including
+the ones that are wrong for production and are deliberate scope decisions
+for a one-day build.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

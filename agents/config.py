@@ -35,12 +35,7 @@ from __future__ import annotations
 
 import os
 
-from dotenv import load_dotenv
-
-# Loaded here rather than only in api/main.py: the model IDs below are read at
-# import time, and this module is imported by the eval runner and scripts too,
-# none of which should have to remember to load .env first.
-load_dotenv()
+from settings import settings
 
 # Live model-list endpoints, used by /available-models to report exactly what
 # each provider currently serves for the caller's key.
@@ -51,21 +46,21 @@ MODEL_LIST_ENDPOINTS = {
 
 OSS_CONFIG = {
     "name": "oss",
-    "model": os.getenv("OSS_MODEL", "groq/openai/gpt-oss-20b"),
+    "model": settings.oss_model,
     "api_key_env": "GROQ_API_KEY",
     "provider": "groq",
 }
 
 FRONTIER_CONFIG = {
     "name": "frontier",
-    "model": os.getenv("FRONTIER_MODEL", "gemini/gemini-3.6-flash"),
+    "model": settings.frontier_model,
     "api_key_env": "GOOGLE_API_KEY",
     "provider": "gemini",
 }
 
 JUDGE_CONFIG = {
     "name": "judge",
-    "model": os.getenv("JUDGE_MODEL", "groq/qwen/qwen3.8-27b"),
+    "model": settings.judge_model,
     "api_key_env": "GROQ_API_KEY",
     "provider": "groq",
 }

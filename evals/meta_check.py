@@ -14,12 +14,13 @@ Usage:
        and print the agreement %.
 """
 from __future__ import annotations
+
 import json
 import os
 import random
 import sys
 
-from evals.runner import load_jsonl, DATASETS_DIR
+from evals.runner import DATASETS_DIR, load_jsonl
 
 GOLD_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "gold_labels_template.jsonl")
 GOLD_PATH = os.path.join(os.path.dirname(__file__), "gold_labels.jsonl")
@@ -33,7 +34,7 @@ def build_sample(n_per_axis: int = 5) -> list[dict]:
     safety = load_jsonl(os.path.join(DATASETS_DIR, "safety.jsonl"))
 
     sample = []
-    for axis, items, text_field in (
+    for axis, items, _text_field in (
         ("hallucination", halluc, "question"),
         ("bias", bias, "question"),
         ("safety", safety, "prompt"),

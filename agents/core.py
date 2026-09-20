@@ -5,18 +5,22 @@ memory handling, retry logic) is identical, which is the whole point of the
 "keep the architecture fixed" requirement.
 """
 from __future__ import annotations
+
 import json
 import logging
+import threading
 import time
-from typing import Callable
+from collections import OrderedDict
+from collections.abc import Callable
 
-from agents.tools import lookup_kb, search_web, TOOL_SCHEMAS
 from agents.prompts import system_prompt
+from agents.tools import TOOL_SCHEMAS, lookup_kb, search_web
+from settings import settings
 
 logger = logging.getLogger("wellness.core")
 
-MAX_TOOL_ITERATIONS = 2
-MEMORY_WINDOW = 6  # last N messages kept per session (short-term memory)
+MAX_TOOL_ITERATIONS = settings.max_tool_iterations
+MEMORY_WINDOW = settings.memory_window  # messages kept per session
 
 # Free tiers get capacity-rejected under load - Gemini returns 503 "high
 # demand ... try again later" and Groq 429s on rate limits. Both are
@@ -24,7 +28,7 @@ MEMORY_WINDOW = 6  # last N messages kept per session (short-term memory)
 # broken when it isn't. Permanent errors (bad key, retired model ID) are
 # re-raised immediately so they stay visible instead of being masked by
 # three slow retries.
-MAX_COMPLETION_RETRIES = 3
+MAX_COMPLETION_RETRIES = settings.completion_retries
 TRANSIENT_MARKERS = (
     "503", "unavailable", "overloaded", "high demand",
     "429", "rate limit", "rate_limit", "quota",
@@ -53,9 +57,70 @@ def _completion_with_retry(completion_fn, **kwargs):
             time.sleep(delay)
             delay *= 2
 
-# In-process session memory: session_id -> list[{"role", "content"}]
-# Intentionally not persisted (plan.md Decision #6) - fine for a same-day POC.
-SESSIONS: dict[str, list[dict]] = {}
+class SessionStore:
+    """Bounded in-process short-term memory.
+
+    A plain dict grows without limit: every unique session_id a caller
+    invents costs memory forever, which on a public deployment is a trivial
+    way to exhaust the process. This caps it on both axes - entries expire
+    after a TTL, and the oldest are evicted once the store is full.
+
+    In-process is a deliberate choice for this scope, and its consequence is
+    explicit: memory is lost on restart and is not shared between replicas,
+    so running more than one instance needs Redis behind this same
+    interface. See docs/DESIGN.md.
+    """
+
+    def __init__(self, max_sessions: int = 1000, ttl_seconds: int = 3600):
+        self.max_sessions = max_sessions
+        self.ttl_seconds = ttl_seconds
+        self._data: OrderedDict[str, tuple[float, list[dict]]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def _expired(self, stamped_at: float, now: float) -> bool:
+        return now - stamped_at > self.ttl_seconds
+
+    def get(self, session_id: str) -> list[dict]:
+        now = time.time()
+        with self._lock:
+            entry = self._data.get(session_id)
+            if entry is None:
+                return []
+            stamped_at, messages = entry
+            if self._expired(stamped_at, now):
+                del self._data[session_id]
+                return []
+            self._data.move_to_end(session_id)  # mark as recently used
+            return list(messages)
+
+    def set(self, session_id: str, messages: list[dict]) -> None:
+        now = time.time()
+        with self._lock:
+            self._data[session_id] = (now, list(messages))
+            self._data.move_to_end(session_id)
+            # drop anything stale, then trim to the cap (oldest first)
+            for key in [k for k, (ts, _) in self._data.items() if self._expired(ts, now)]:
+                del self._data[key]
+            while len(self._data) > self.max_sessions:
+                self._data.popitem(last=False)
+
+    def pop(self, session_id: str) -> None:
+        with self._lock:
+            self._data.pop(session_id, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._data)
+
+
+SESSIONS = SessionStore(
+    max_sessions=settings.max_sessions,
+    ttl_seconds=settings.session_ttl_seconds,
+)
 
 
 def _safe_json_loads(raw: str) -> dict:
@@ -75,11 +140,11 @@ def _safe_json_loads(raw: str) -> dict:
 
 
 def get_history(session_id: str) -> list[dict]:
-    return list(SESSIONS.get(session_id, []))
+    return SESSIONS.get(session_id)
 
 
 def reset_session(session_id: str) -> None:
-    SESSIONS.pop(session_id, None)
+    SESSIONS.pop(session_id)
 
 
 def run_turn(
@@ -163,12 +228,15 @@ def run_turn(
         # exhausted MAX_TOOL_ITERATIONS+1 loops without a final text answer
         final_text = "I wasn't able to finish looking that up - could you rephrase or ask again?"
 
-    SESSIONS[session_id] = (
-        history
-        + [
-            {"role": "user", "content": user_message},
-            {"role": "assistant", "content": final_text},
-        ]
-    )[-MEMORY_WINDOW:]
+    SESSIONS.set(
+        session_id,
+        (
+            history
+            + [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": final_text},
+            ]
+        )[-MEMORY_WINDOW:],
+    )
 
     return {"response": final_text, "tool_calls": tool_calls_log}

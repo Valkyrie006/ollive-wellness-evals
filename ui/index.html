@@ -2,7 +2,12 @@
 <html lang="en" data-theme="auto">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A wellness assistant comparing an open-source and a frontier model on one fixed architecture, with knowledge-base lookup and web search.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#2c7d6a" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1412" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>Wellness Assistant</title>
 <style>
   :root {
@@ -72,6 +77,28 @@
 
   * { box-sizing: border-box; }
   html, body { height: 100%; }
+
+  /* Respect the OS setting - the entrance/typing animations are decorative. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important;
+    }
+  }
+
+  /* Visible keyboard focus everywhere, since the whole app is operable
+     without a mouse. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
   body {
     margin: 0;
     background: var(--bg);
@@ -380,7 +407,36 @@
     transition: border-color .14s, background .14s;
   }
   .model-pill:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-  footer { text-align: center; font-size: 11.5px; color: var(--text-dim); }
+  footer {
+    text-align: center; font-size: 11.5px; color: var(--text-dim);
+    display: flex; justify-content: center; align-items: center; gap: 8px;
+    flex-wrap: wrap;
+  }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+  .status-dot.down { background: var(--danger); }
+  .char-count { font-size: 11px; color: var(--text-dim); align-self: flex-end; padding-bottom: 11px; }
+  .char-count.over { color: var(--danger); font-weight: 600; }
+
+  /* --------- mobile --------- */
+  @media (max-width: 640px) {
+    body { padding: 12px 0 0; }
+    .app { gap: 10px; }
+    header { padding: 0 16px; gap: 9px; }
+    .switcher, #diag, footer { margin: 0 16px; }
+    h1 { font-size: 16px; }
+    .sub { display: none; }
+    .icon-btn { height: 32px; padding: 0 9px; font-size: 12px; }
+    .chat {
+      border-radius: 14px 14px 0 0;
+      border-bottom: 0;
+      min-height: 0;
+      flex: 1;
+      margin: 0;
+    }
+    .bubble { max-width: 92%; }
+    .composer { padding-bottom: max(11px, env(safe-area-inset-bottom)); }
+    .app { min-height: calc(100vh - 12px); }
+  }
 </style>
 </head>
 <body>
@@ -424,17 +480,25 @@
 
   <div id="diag"><div class="diag-card" id="diag-card"></div></div>
 
-  <div class="chat">
-    <div id="messages"></div>
+  <main class="chat">
+    <div id="messages" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Conversation"></div>
     <div class="composer">
-      <textarea id="input" rows="1" placeholder="Ask about diet, exercise, sleep, meditation&hellip;"></textarea>
-      <button class="send" id="send" aria-label="Send">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7Z"/></svg>
+      <label for="input" class="visually-hidden">Your message</label>
+      <textarea id="input" rows="1" maxlength="4000"
+                placeholder="Ask about diet, exercise, sleep, meditation&hellip;"></textarea>
+      <span class="char-count" id="char-count" aria-hidden="true"></span>
+      <button class="send" id="send" aria-label="Send message">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7Z"/></svg>
       </button>
     </div>
-  </div>
+  </main>
 
-  <footer id="footer">Session <span id="sid"></span></footer>
+  <footer>
+    <span class="status-dot" id="status-dot" title="Server reachable"></span>
+    <span id="status-text">connected</span>
+    <span aria-hidden="true">&middot;</span>
+    <span>session <span id="sid"></span></span>
+  </footer>
 </div>
 
 <script>
@@ -448,6 +512,8 @@ const SUGGESTIONS = [
 let sessionId = newSessionId();
 let agent = "oss";
 let busy = false;
+let inFlight = null;          // AbortController for the current request
+let maxChars = 4000;          // replaced by the server's own limit on load
 
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("input");
@@ -632,7 +698,16 @@ function renderMarkdown(src) {
   return out.join("");
 }
 
-function hintFor(detail) {
+function setStatus(up, text) {
+  const dot = document.getElementById("status-dot");
+  dot.classList.toggle("down", !up);
+  dot.title = up ? "Server reachable" : "Server unreachable";
+  document.getElementById("status-text").textContent = text;
+}
+
+function hintFor(detail, status) {
+  if (status === 429) return "You've hit the request rate limit. Wait a few seconds and try again.";
+  if (status === 503) return "The server is up but not ready - check that its API keys are set and the knowledge base loaded.";
   const d = (detail || "").toLowerCase();
   if (d.includes("api key") || d.includes("invalid_api_key") || d.includes("unauthorized") || d.includes("401")) {
     return "That reads like a key problem — check the key in .env is current and matches the provider, then restart the server.";
@@ -664,7 +739,7 @@ function addError(status, detail) {
       Request failed (${status})
     </div>
     <pre>${escapeHtml(detail || "No detail returned by the server.")}</pre>
-    <div class="hint">${escapeHtml(hintFor(detail))}</div>`;
+    <div class="hint">${escapeHtml(hintFor(detail, status))}</div>`;
   row.appendChild(card);
   messagesEl.appendChild(row);
   scrollDown();
@@ -673,25 +748,39 @@ function addError(status, detail) {
 async function send() {
   const message = inputEl.value.trim();
   if (!message || busy) return;
+  if (message.length > maxChars) {
+    addError("too long", `Message is ${message.length} characters; the server accepts at most ${maxChars}.`);
+    return;
+  }
+
   busy = true;
   sendBtn.disabled = true;
   addMessage("user", message);
   inputEl.value = "";
   inputEl.style.height = "auto";
+  updateCharCount();
   addTyping();
+
+  inFlight = new AbortController();
+  // Don't hang forever if the server wedges - free tiers can be very slow,
+  // so this is generous, but it is bounded.
+  const timeout = setTimeout(() => inFlight && inFlight.abort(), 120000);
 
   try {
     const res = await fetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId, agent, message }),
+      signal: inFlight.signal,
     });
+    setStatus(true, "connected");
 
     if (!res.ok) {
       let detail = "";
       try {
         const body = await res.json();
         detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+        if (body.request_id) detail += `\n\nrequest id: ${body.request_id}`;
       } catch (_) {
         detail = await res.text();
       }
@@ -705,12 +794,28 @@ async function send() {
     const bubble = addMessage("assistant", data.response || "(empty response)");
     addMeta(bubble, data);
   } catch (e) {
-    addError("network", String(e) + "\n\nThe server may have stopped. Check the terminal running uvicorn.");
+    if (e.name === "AbortError") {
+      addError("timed out", "The request took too long and was cancelled.");
+    } else {
+      setStatus(false, "server unreachable");
+      addError("network", String(e) + "\n\nThe server may have stopped. Check the terminal running uvicorn.");
+    }
   } finally {
+    clearTimeout(timeout);
+    inFlight = null;
     busy = false;
     sendBtn.disabled = false;
     inputEl.focus();
   }
+}
+
+function updateCharCount() {
+  const el = document.getElementById("char-count");
+  const n = inputEl.value.length;
+  // Only surface the counter as the limit gets close - otherwise it's noise.
+  if (n < maxChars * 0.8) { el.textContent = ""; el.classList.remove("over"); return; }
+  el.textContent = `${n}/${maxChars}`;
+  el.classList.toggle("over", n > maxChars);
 }
 
 /* ---------- diagnostics ---------- */
@@ -802,10 +907,23 @@ document.getElementById("new-btn").onclick = async () => {
   inputEl.focus();
 };
 
+/* Theme choice persists per browser. Wrapped because storage throws in
+   some privacy modes, and a theme toggle must never break the app. */
+function applyStoredTheme() {
+  try {
+    const saved = localStorage.getItem("wellness-theme");
+    if (saved === "light" || saved === "dark") {
+      document.documentElement.setAttribute("data-theme", saved);
+    }
+  } catch (_) { /* storage unavailable; fall back to the OS preference */ }
+}
+
 document.getElementById("theme-btn").onclick = () => {
   const cur = document.documentElement.getAttribute("data-theme");
   const isDark = cur === "dark" || (cur !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
-  document.documentElement.setAttribute("data-theme", isDark ? "light" : "dark");
+  const next = isDark ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("wellness-theme", next); } catch (_) {}
 };
 
 sendBtn.onclick = send;
@@ -815,7 +933,28 @@ inputEl.addEventListener("keydown", e => {
 inputEl.addEventListener("input", () => {
   inputEl.style.height = "auto";
   inputEl.style.height = Math.min(inputEl.scrollHeight, 132) + "px";
+  updateCharCount();
 });
+
+/* Bootstrap: read the server's own config so the UI matches what the
+   backend will actually accept and expose. A deployed instance normally has
+   the debug endpoints off, and offering a button that 404s is worse than
+   not showing it. */
+(async () => {
+  applyStoredTheme();
+  try {
+    const cfg = await fetch("/config").then(r => r.json());
+    maxChars = cfg.max_message_chars || maxChars;
+    inputEl.setAttribute("maxlength", String(maxChars));
+    if (!cfg.debug_endpoints) document.getElementById("diag-btn").style.display = "none";
+    if (cfg.env && cfg.env !== "production") {
+      document.getElementById("status-text").textContent = cfg.env;
+    }
+    setStatus(true, document.getElementById("status-text").textContent);
+  } catch (_) {
+    setStatus(false, "server unreachable");
+  }
+})();
 
 /* Label the switcher from the server's actual config, so the displayed model
    never silently disagrees with the one being called. */

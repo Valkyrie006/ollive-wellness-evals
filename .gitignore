@@ -10,3 +10,5 @@ evals/gold_labels_template.jsonl
 evals/datasets/*.jsonl
 .venv/
 venv/
+_to_delete/
+.ruff_cache/

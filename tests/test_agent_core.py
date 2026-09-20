@@ -9,7 +9,7 @@ import chromadb
 
 import agents.core as core
 from kb.ingest import build_kb
-from tests.fakes import fake_embed_fn, FakeMessage, FakeToolCall, make_scripted_completion_fn
+from tests.fakes import FakeMessage, FakeToolCall, fake_embed_fn, make_scripted_completion_fn
 
 
 def setup_kb():

@@ -3,6 +3,7 @@ reach (Groq, Gemini, Hugging Face model downloads, DuckDuckGo) - see
 tests/README.md for exactly what this does and doesn't prove.
 """
 from __future__ import annotations
+
 import hashlib
 
 
@@ -18,7 +19,7 @@ def fake_embed_fn(texts: list[str]) -> list[list[float]]:
         words = text.lower().split()
         vec = [0.0] * 8
         for w in words:
-            h = int(hashlib.md5(w.encode()).hexdigest(), 16)
+            h = int(hashlib.md5(w.encode(), usedforsecurity=False).hexdigest(), 16)
             vec[h % 8] += 1.0
         norm = sum(v * v for v in vec) ** 0.5 or 1.0
         vectors.append([v / norm for v in vec])

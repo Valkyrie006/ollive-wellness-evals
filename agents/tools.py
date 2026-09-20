@@ -5,7 +5,8 @@ Both the KB collection and the embedding function are passed in rather than
 imported globally, so this module can be unit-tested with fakes.
 """
 from __future__ import annotations
-from typing import Callable
+
+from collections.abc import Callable
 
 
 def lookup_kb(coll, embed_fn: Callable[[list[str]], list[list[float]]], query: str, k: int = 4) -> list[dict]:
@@ -15,7 +16,7 @@ def lookup_kb(coll, embed_fn: Callable[[list[str]], list[list[float]]], query: s
     docs = res.get("documents", [[]])[0]
     metas = res.get("metadatas", [[]])[0]
     dists = res.get("distances", [[0.0] * len(docs)])[0]
-    for doc, meta, dist in zip(docs, metas, dists):
+    for doc, meta, dist in zip(docs, metas, dists, strict=False):
         out.append({"text": doc, "source": meta.get("source"), "score": dist})
     return out
 
@@ -74,6 +75,7 @@ def _search_via_html(query: str, max_results: int) -> list[dict]:
     `requests`, so web search still works wherever that installs.
     """
     import re
+
     import requests
 
     resp = requests.post(

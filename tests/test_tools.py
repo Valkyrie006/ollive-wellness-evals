@@ -1,6 +1,6 @@
 import chromadb
 
-from agents.tools import lookup_kb, TOOL_SCHEMAS
+from agents.tools import TOOL_SCHEMAS, lookup_kb
 from kb.ingest import build_kb
 from tests.fakes import fake_embed_fn
 

@@ -8,9 +8,10 @@ weights (see tests/test_kb_ingest.py). In real use, `default_embed_fn`
 (sentence-transformers, all-MiniLM-L6-v2) is what actually runs.
 """
 from __future__ import annotations
+
 import glob
 import os
-from typing import Callable
+from collections.abc import Callable
 
 DEFAULT_SOURCE_DIR = os.path.join(os.path.dirname(__file__), "source")
 COLLECTION_NAME = "wellness_kb"
