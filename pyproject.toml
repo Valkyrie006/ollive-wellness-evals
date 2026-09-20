@@ -2,7 +2,7 @@
 name = "ollive-wellness-evals"
 version = "1.0.0"
 description = "Two wellness assistants on one fixed architecture, with an LLM-as-judge evaluation harness."
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -13,7 +13,11 @@ filterwarnings = [
 
 [tool.ruff]
 line-length = 110
-target-version = "py310"
+# Pinned to the OLDEST supported interpreter, not the newest. With py310
+# here, ruff suggests 3.10+ idioms (zip(strict=), X | Y at runtime) that
+# import fine and then fail at runtime on 3.9 - which is exactly how a
+# lint "fix" shipped a production bug in this repo.
+target-version = "py39"
 exclude = [".venv", "venv", "_to_delete"]
 
 [tool.ruff.lint]

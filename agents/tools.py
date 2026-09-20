@@ -16,7 +16,10 @@ def lookup_kb(coll, embed_fn: Callable[[list[str]], list[list[float]]], query: s
     docs = res.get("documents", [[]])[0]
     metas = res.get("metadatas", [[]])[0]
     dists = res.get("distances", [[0.0] * len(docs)])[0]
-    for doc, meta, dist in zip(docs, metas, dists, strict=False):
+    # Plain zip, not zip(strict=...): that keyword is Python 3.10+ and this
+    # has to run on 3.9 too. Chroma returns these three lists at equal
+    # length for a single query, so there is nothing for strict= to catch.
+    for doc, meta, dist in zip(docs, metas, dists):  # noqa: B905
         out.append({"text": doc, "source": meta.get("source"), "score": dist})
     return out
 

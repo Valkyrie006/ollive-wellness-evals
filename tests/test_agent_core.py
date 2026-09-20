@@ -170,3 +170,49 @@ def test_permanent_upstream_errors_are_not_retried(monkeypatch):
     except RuntimeError as e:
         assert "model_not_found" in str(e)
     assert calls["n"] == 1  # raised immediately, no retries
+
+
+def test_final_pass_nudges_a_tool_happy_model_into_answering():
+    """A model that keeps choosing tools would otherwise exhaust every
+    iteration and hand the user the "couldn't finish" fallback even though
+    it had gathered good tool results.
+
+    Observed live: gpt-oss-20b made three consecutive lookup_kb calls and
+    the user got the fallback instead of an answer. The first fix withheld
+    tools on the final pass, which Groq rejects outright with
+    tool_use_failed if the model tries a call anyway - so the loop now
+    nudges with an instruction instead, which every provider tolerates.
+    """
+    core.SESSIONS.clear()
+    coll = setup_kb()
+
+    seen_messages = []
+
+    def greedy(**kwargs):
+        seen_messages.append(kwargs["messages"])
+        nudged = any(
+            isinstance(m.get("content"), str) and "Do not call any more tools" in m["content"]
+            for m in kwargs["messages"]
+        )
+        assert "tools" in kwargs, "tools must stay in every request - withholding them breaks Groq"
+        if nudged:
+            return make_scripted_completion_fn(
+                [FakeMessage(content="Here is what I found.", tool_calls=None)]
+            )(**kwargs)
+        return make_scripted_completion_fn([
+            FakeMessage(content=None,
+                        tool_calls=[FakeToolCall(f"c{len(seen_messages)}", "lookup_kb",
+                                                 '{"query": "habits"}')])
+        ])(**kwargs)
+
+    result = core.run_turn(
+        session_id="greedy-1", user_message="What are good habits?",
+        model_config={"model": "fake/model"}, api_key=None,
+        coll=coll, embed_fn=fake_embed_fn, completion_fn=greedy,
+    )
+
+    assert result["response"] == "Here is what I found."
+    # the nudge is a working-list message only - it must not leak into
+    # the stored conversation the user sees next turn
+    stored = core.get_history("greedy-1")
+    assert not any("Do not call any more tools" in (m.get("content") or "") for m in stored)

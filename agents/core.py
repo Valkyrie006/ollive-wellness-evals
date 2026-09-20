@@ -175,7 +175,27 @@ def run_turn(
     tool_calls_log = []
     final_text = None
 
-    for _ in range(MAX_TOOL_ITERATIONS + 1):
+    for iteration in range(MAX_TOOL_ITERATIONS + 1):
+        if iteration == MAX_TOOL_ITERATIONS:
+            # Last pass. A model that keeps choosing tools - which the
+            # mandatory-grounding prompt actively encourages - would
+            # otherwise burn every iteration and leave the user with the
+            # "couldn't finish" fallback despite having gathered perfectly
+            # good tool results.
+            #
+            # Nudge rather than withhold. Dropping `tools` (or setting
+            # tool_choice="none") makes Groq reject the whole request with
+            # tool_use_failed the moment the model tries a call anyway -
+            # observed live. A plain instruction is provider-agnostic and
+            # degrades gracefully if ignored.
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Answer now using the information you have already gathered. "
+                    "Do not call any more tools."
+                ),
+            })
+
         resp = _completion_with_retry(
             completion_fn,
             model=model_config["model"],
