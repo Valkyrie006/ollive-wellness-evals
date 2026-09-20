@@ -115,3 +115,58 @@ def test_run_turn_repairs_a_lightly_truncated_tool_call_json():
     )
     assert "error" not in result["tool_calls"][0]["result"]
     assert result["tool_calls"][0]["args"] == {"query": "diet"}
+
+
+def test_transient_upstream_errors_are_retried_then_succeed(monkeypatch):
+    """A 503 'high demand' from a free tier is retryable and must not surface
+    as a failure. A permanent error (retired model ID) must NOT be retried -
+    masking it behind three slow retries is how a config bug becomes a
+    mystery.
+    """
+    monkeypatch.setattr(core.time, "sleep", lambda *_: None)  # no real backoff in tests
+    core.SESSIONS.clear()
+    coll = setup_kb()
+
+    calls = {"n": 0}
+
+    def flaky(**kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("GeminiException - 503 This model is currently experiencing high demand.")
+        return FakeMessage(content="Here's some advice.", tool_calls=None)
+
+    # the scripted fake returns a response object; wrap it the same way
+    def completion_fn(**kwargs):
+        msg = flaky(**kwargs)
+        return make_scripted_completion_fn([msg])(**kwargs)
+
+    result = core.run_turn(
+        session_id="retry-1", user_message="hi",
+        model_config={"model": "fake/model"}, api_key=None,
+        coll=coll, embed_fn=fake_embed_fn, completion_fn=completion_fn,
+    )
+    assert result["response"] == "Here's some advice."
+    assert calls["n"] == 3  # two failures, then success
+
+
+def test_permanent_upstream_errors_are_not_retried(monkeypatch):
+    monkeypatch.setattr(core.time, "sleep", lambda *_: None)
+    core.SESSIONS.clear()
+    coll = setup_kb()
+
+    calls = {"n": 0}
+
+    def always_model_not_found(**kwargs):
+        calls["n"] += 1
+        raise RuntimeError('GroqException - {"code":"model_not_found"}')
+
+    try:
+        core.run_turn(
+            session_id="retry-2", user_message="hi",
+            model_config={"model": "fake/model"}, api_key=None,
+            coll=coll, embed_fn=fake_embed_fn, completion_fn=always_model_not_found,
+        )
+        raise AssertionError("expected the permanent error to propagate")
+    except RuntimeError as e:
+        assert "model_not_found" in str(e)
+    assert calls["n"] == 1  # raised immediately, no retries

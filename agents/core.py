@@ -6,13 +6,52 @@ memory handling, retry logic) is identical, which is the whole point of the
 """
 from __future__ import annotations
 import json
+import logging
+import time
 from typing import Callable
 
 from agents.tools import lookup_kb, search_web, TOOL_SCHEMAS
 from agents.prompts import SYSTEM_PROMPT
 
+logger = logging.getLogger("wellness.core")
+
 MAX_TOOL_ITERATIONS = 2
 MEMORY_WINDOW = 6  # last N messages kept per session (short-term memory)
+
+# Free tiers get capacity-rejected under load - Gemini returns 503 "high
+# demand ... try again later" and Groq 429s on rate limits. Both are
+# retryable and both are common enough that not retrying makes the app look
+# broken when it isn't. Permanent errors (bad key, retired model ID) are
+# re-raised immediately so they stay visible instead of being masked by
+# three slow retries.
+MAX_COMPLETION_RETRIES = 3
+TRANSIENT_MARKERS = (
+    "503", "unavailable", "overloaded", "high demand",
+    "429", "rate limit", "rate_limit", "quota",
+    "timeout", "timed out", "temporarily",
+)
+
+
+def _is_transient(err: Exception) -> bool:
+    msg = str(err).lower()
+    return any(marker in msg for marker in TRANSIENT_MARKERS)
+
+
+def _completion_with_retry(completion_fn, **kwargs):
+    delay = 1.0
+    for attempt in range(MAX_COMPLETION_RETRIES):
+        try:
+            return completion_fn(**kwargs)
+        except Exception as e:
+            last_attempt = attempt == MAX_COMPLETION_RETRIES - 1
+            if last_attempt or not _is_transient(e):
+                raise
+            logger.warning(
+                "transient upstream error (attempt %d/%d), retrying in %.1fs: %s",
+                attempt + 1, MAX_COMPLETION_RETRIES, delay, str(e)[:160],
+            )
+            time.sleep(delay)
+            delay *= 2
 
 # In-process session memory: session_id -> list[{"role", "content"}]
 # Intentionally not persisted (plan.md Decision #6) - fine for a same-day POC.
@@ -72,7 +111,8 @@ def run_turn(
     final_text = None
 
     for _ in range(MAX_TOOL_ITERATIONS + 1):
-        resp = completion_fn(
+        resp = _completion_with_retry(
+            completion_fn,
             model=model_config["model"],
             messages=messages,
             tools=TOOL_SCHEMAS,
