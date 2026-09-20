@@ -29,18 +29,34 @@ RESULTS_DIR = os.path.join(os.path.dirname(HERE), "results")
 # first full run lost 51 of 68 items to 429s at a 0.6s pause; these values
 # are what survived. Gemini's free tier is the stricter of the two, so it
 # gets a longer gap. Override per deployment via EVAL_PACING_<AGENT>.
-DEFAULT_PACING_S = {"oss": 5.0, "frontier": 8.0}
+# Gemini's free tier is 20 requests PER MINUTE (not a daily cap, as first
+# assumed). One chat turn costs 1-3 model calls because of the tool loop,
+# so ~12s between frontier items keeps us under the ceiling instead of
+# spending the run inside backoff.
+#
+# Keyed by PROVIDER, not by agent name. The rate limit belongs to the
+# provider, and which provider an agent sits on is a .env override away -
+# pacing an agent called "oss" at 4s was correct while it ran on Groq and
+# wrong the moment it moved to Gemini.
+DEFAULT_PACING_S = {"gemini": 12.0, "groq": 4.0}
+FALLBACK_PACING_S = 6.0
 
 
 def pacing_for(agent: str) -> float:
     import os
+
     raw = os.getenv(f"EVAL_PACING_{agent.upper()}")
     if raw:
         try:
             return float(raw)
         except ValueError:
             pass
-    return DEFAULT_PACING_S.get(agent, 3.0)
+
+    from agents.config import AGENTS, provider_of
+    config = AGENTS.get(agent)
+    if not config:
+        return FALLBACK_PACING_S
+    return DEFAULT_PACING_S.get(provider_of(config["model"]), FALLBACK_PACING_S)
 
 
 def load_jsonl(path: str) -> list:
@@ -83,7 +99,8 @@ def call_agent(base_url: str, agent: str, message: str, session_id: str | None =
 # axes
 # --------------------------------------------------------------------------
 
-def run_hallucination(base_url: str, agent: str, judge: Judge, items: list) -> list:
+def run_hallucination(base_url: str, agent: str, judge: Judge, items: list,
+                      on_item=None) -> list:
     rows = []
     for item in items:
         got = call_agent(base_url, agent, item["question"])
@@ -93,6 +110,8 @@ def run_hallucination(base_url: str, agent: str, judge: Judge, items: list) -> l
         if got.get("error"):
             row["error"] = got["error"]
             rows.append(row)
+            if on_item:
+                on_item()
             continue
 
         ctx = item.get("context") or ""
@@ -110,10 +129,13 @@ def run_hallucination(base_url: str, agent: str, judge: Judge, items: list) -> l
             row["error"] = f"judge failed: {type(e).__name__}: {str(e)[:150]}"
         row["response"] = got["response"][:600]
         rows.append(row)
+        if on_item:
+            on_item()
     return rows
 
 
-def run_bias(base_url: str, agent: str, judge: Judge, items: list) -> list:
+def run_bias(base_url: str, agent: str, judge: Judge, items: list,
+             on_item=None) -> list:
     rows = []
     for item in items:
         got = call_agent(base_url, agent, item["question"])
@@ -124,6 +146,8 @@ def run_bias(base_url: str, agent: str, judge: Judge, items: list) -> list:
         if got.get("error"):
             row["error"] = got["error"]
             rows.append(row)
+            if on_item:
+                on_item()
             continue
         try:
             v = judge.ask(BIAS_PROMPT.format(question=item["question"], answer=got["response"]))
@@ -134,10 +158,13 @@ def run_bias(base_url: str, agent: str, judge: Judge, items: list) -> list:
             row["error"] = f"judge failed: {type(e).__name__}: {str(e)[:150]}"
         row["response"] = got["response"][:600]
         rows.append(row)
+        if on_item:
+            on_item()
     return rows
 
 
-def run_safety(base_url: str, agent: str, judge: Judge, items: list) -> list:
+def run_safety(base_url: str, agent: str, judge: Judge, items: list,
+               on_item=None) -> list:
     """Scored two ways on purpose.
 
     The LLM judge decides refused vs complied; the deterministic regex
@@ -155,6 +182,8 @@ def run_safety(base_url: str, agent: str, judge: Judge, items: list) -> list:
         if got.get("error"):
             row["error"] = got["error"]
             rows.append(row)
+            if on_item:
+                on_item()
             continue
 
         answer = got["response"]
@@ -177,6 +206,8 @@ def run_safety(base_url: str, agent: str, judge: Judge, items: list) -> list:
             row["error"] = f"judge failed: {type(e).__name__}: {str(e)[:150]}"
         row["response"] = answer[:600]
         rows.append(row)
+        if on_item:
+            on_item()
     return rows
 
 
@@ -248,16 +279,24 @@ def run_all(base_url: str = "http://127.0.0.1:8000", agents=("oss", "frontier"),
     runners = {"hallucination": run_hallucination, "bias": run_bias, "safety": run_safety}
 
     total = len(agents) * sum(len(v) for v in data.values())
-    done = 0
+    # Progress is reported per ITEM, not per axis. A full run is ~20 minutes
+    # of paced upstream calls; reporting only at axis boundaries leaves the
+    # caller staring at 0/0 for minutes at a time, which is indistinguishable
+    # from a hung run.
+    counter = {"done": 0}
     rows: list = []
 
     for agent in agents:
         for axis, items in data.items():
             logger.info("evals: %s / %s (%d items)", agent, axis, len(items))
-            rows.extend(runners[axis](base_url, agent, judge, items))
-            done += len(items)
-            if progress:
-                progress(done, total, f"{agent}/{axis}")
+            label = f"{agent}/{axis}"
+
+            def tick(_label=label):
+                counter["done"] += 1
+                if progress:
+                    progress(counter["done"], total, _label)
+
+            rows.extend(runners[axis](base_url, agent, judge, items, on_item=tick))
 
     with open(os.path.join(RESULTS_DIR, raw_name), "w", encoding="utf-8") as f:
         for r in rows:

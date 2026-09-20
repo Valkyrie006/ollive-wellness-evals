@@ -90,12 +90,20 @@ def test_chat_rejects_blank_message(monkeypatch):
 
 def test_chat_returns_503_when_key_missing(monkeypatch):
     """A missing key should be a clear server-side 503, not a confusing
-    upstream auth error surfaced as a 502."""
+    upstream auth error surfaced as a 502.
+
+    The key name is read from the agent's config rather than hardcoded:
+    which provider the OSS agent sits on is a .env override away, and a
+    test that pins one provider fails for the wrong reason when it moves.
+    """
+    from agents.config import AGENTS
+
+    key_env = AGENTS["oss"]["api_key_env"]
     tc = make_client(monkeypatch, [FakeMessage(content="ok", tool_calls=None)])
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv(key_env, raising=False)
     resp = tc.post("/chat", json={"session_id": "t1", "agent": "oss", "message": "hi"})
     assert resp.status_code == 503
-    assert "GROQ_API_KEY" in resp.json()["detail"]
+    assert key_env in resp.json()["detail"]
 
 
 def test_security_headers_are_applied(monkeypatch):

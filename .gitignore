@@ -8,3 +8,5 @@ evals/datasets/*.jsonl
 !evals/datasets/fallback/*.jsonl
 .venv/
 venv/
+logs/
+.ruff_cache/

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -38,12 +39,65 @@ TRANSIENT_MARKERS = (
 
 RATE_LIMIT_MARKERS = ("429", "rate limit", "rate_limit", "quota", "resource_exhausted")
 
+# Providers usually say exactly how long to wait. Gemini returns
+# "Please retry in 33.1s" and a retryDelay field; guessing instead of
+# reading it is what turned a 20-requests-per-minute limit into a run that
+# lost most of its items.
+_RETRY_AFTER_PATTERNS = (
+    r"please retry in\s+([0-9]+(?:\.[0-9]+)?)\s*s",
+    r"retrydelay[\"\':\s]+([0-9]+(?:\.[0-9]+)?)s",
+    r"retry[-_ ]after[\"\':\s]+([0-9]+(?:\.[0-9]+)?)",
+)
+
+# Groq words it differently again - "Please try again in 1m23.4s", or
+# "in 2h14m30s" when a daily cap is hit. Matching only Gemini's phrasing
+# meant Groq limits fell back to a blind 20s/40s/80s backoff that could
+# never clear a multi-hour cap, and the error said only "rate limit"
+# instead of "come back in two hours".
+_GROQ_RETRY_PATTERN = re.compile(
+    r"try again in\s+(?:([0-9]+)h)?(?:([0-9]+)m)?(?:([0-9]+(?:\.[0-9]+)?)s)?", re.I)
+
+
+def _groq_retry_seconds(msg: str) -> float | None:
+    m = _GROQ_RETRY_PATTERN.search(msg)
+    if not m or not any(m.groups()):
+        return None
+    hours, minutes, seconds = m.groups()
+    return (float(hours or 0) * 3600 + float(minutes or 0) * 60 + float(seconds or 0)) or None
+
+
+def retry_after_seconds(err: Exception) -> float | None:
+    """The provider's own instruction, when it gives one."""
+    msg = str(err)
+    for pattern in _RETRY_AFTER_PATTERNS:
+        m = re.search(pattern, msg, re.I)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                continue
+    return _groq_retry_seconds(msg)
+
 # A rate limit is a transient error with a completely different time
 # constant. Backing off 1s then 2s against a per-minute quota just burns
 # the retries and reports failure - which is exactly what happened on the
 # first full eval run: 51 of 68 items died this way.
 RATE_LIMIT_BASE_DELAY_S = 20.0
 TRANSIENT_BASE_DELAY_S = 1.0
+
+# Total seconds a single request may spend asleep across all its retries.
+#
+# Without this, honouring the provider's own retry hint is unbounded: a
+# free tier that answers "retry in 90s" five times turns one request into a
+# 7-minute hang. That is worse than failing - the caller (a user, or an
+# eval item) has no signal, no error, and no way to tell a throttled
+# provider from a wedged server. Past the budget the request fails with the
+# provider's message intact, so the cause is still visible.
+#
+# The default (75s) is a deliberate compromise: it covers two rounds of the
+# ~30s "retry in" hint a per-minute free tier gives, which is usually
+# enough to get the item, without letting one request hang for minutes.
+MAX_RETRY_SLEEP_TOTAL_S = settings.max_retry_sleep_total_s
 
 
 def _is_transient(err: Exception) -> bool:
@@ -58,6 +112,7 @@ def _is_rate_limit(err: Exception) -> bool:
 
 def _completion_with_retry(completion_fn, **kwargs):
     delay = None
+    slept = 0.0
     for attempt in range(MAX_COMPLETION_RETRIES):
         try:
             return completion_fn(**kwargs)
@@ -65,14 +120,35 @@ def _completion_with_retry(completion_fn, **kwargs):
             last_attempt = attempt == MAX_COMPLETION_RETRIES - 1
             if last_attempt or not _is_transient(e):
                 raise
-            if delay is None:
-                delay = RATE_LIMIT_BASE_DELAY_S if _is_rate_limit(e) else TRANSIENT_BASE_DELAY_S
+
+            # Prefer what the provider actually told us over our own guess.
+            hinted = retry_after_seconds(e)
+            if hinted is not None:
+                wait = hinted + 1.0          # small buffer for clock skew
+            else:
+                if delay is None:
+                    delay = (RATE_LIMIT_BASE_DELAY_S if _is_rate_limit(e)
+                             else TRANSIENT_BASE_DELAY_S)
+                wait = delay
+                delay *= 2
+
+            if slept + wait > MAX_RETRY_SLEEP_TOTAL_S:
+                # Out of patience, not out of attempts. Raise the provider's
+                # own error so the caller sees "rate limit, retry in Ns"
+                # rather than a request that never came back.
+                logger.warning(
+                    "giving up after %.0fs of backoff; next wait %.0fs exceeds the "
+                    "%.0fs budget: %s", slept, wait, MAX_RETRY_SLEEP_TOTAL_S, str(e)[:600])
+                raise
+
             logger.warning(
-                "transient upstream error (attempt %d/%d), retrying in %.1fs: %s",
-                attempt + 1, MAX_COMPLETION_RETRIES, delay, str(e)[:160],
+                "transient upstream error (attempt %d/%d), retrying in %.1fs%s: %s",
+                attempt + 1, MAX_COMPLETION_RETRIES, wait,
+                " (provider-specified)" if hinted is not None else "",
+                str(e)[:600],
             )
-            time.sleep(delay)
-            delay *= 2
+            time.sleep(wait)
+            slept += wait
 
 class SessionStore:
     """Bounded in-process short-term memory.
@@ -142,7 +218,7 @@ SESSIONS = SessionStore(
 
 def _safe_json_loads(raw: str) -> dict:
     """Tool-call arguments occasionally come back malformed on smaller models
-    (plan.md Decision #3 flags this for Llama/Qwen-class models) - retry once
+    (docs/DESIGN.md records this for small open models) - retry once
     with a couple of common repairs before giving up.
     """
     try:
@@ -191,6 +267,8 @@ def run_turn(
     )
     tool_calls_log = []
     final_text = None
+    # tool name -> the error it raised, for the circuit breaker below
+    failed_tools: dict = {}
 
     for iteration in range(MAX_TOOL_ITERATIONS + 1):
         if iteration == MAX_TOOL_ITERATIONS:
@@ -247,7 +325,20 @@ def run_turn(
             name = tc.function.name
             try:
                 args = _safe_json_loads(tc.function.arguments)
-                if name == "lookup_kb":
+                if name in failed_tools:
+                    # Circuit breaker. A tool that has already failed this
+                    # turn will almost certainly fail again - the causes are
+                    # environmental (no network, a broken TLS stack, a
+                    # blocked endpoint), not query-dependent. Without this,
+                    # a model that keeps reaching for a dead tool burns
+                    # every remaining iteration on identical timeouts: one
+                    # broken web-search backend turned ~10s evaluation items
+                    # into ~3-minute ones and silently poisoned the latency
+                    # numbers.
+                    result = {"error": failed_tools[name],
+                              "note": "this tool already failed on this turn; "
+                                      "answer from what you have instead of retrying it"}
+                elif name == "lookup_kb":
                     result = lookup_kb(coll, embed_fn, **args)
                 elif name == "search_web":
                     result = search_web(**args)
@@ -256,6 +347,8 @@ def run_turn(
             except Exception as e:  # noqa: BLE001 - deliberately broad, logged into tool_calls_log
                 args = None
                 result = {"error": str(e)}
+                failed_tools[name] = str(e)[:200]
+                logger.warning("tool %s failed: %s", name, e)
 
             tool_calls_log.append({"name": name, "args": args, "result": result})
             messages.append(

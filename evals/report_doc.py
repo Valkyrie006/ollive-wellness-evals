@@ -24,7 +24,10 @@ AGENT_LABEL = {"oss": "Open-source", "frontier": "Frontier"}
 # for the cost column; the run itself cost nothing.
 PRICING = {
     "groq/openai/gpt-oss-20b": {"in": 0.075, "out": 0.30, "note": "free tier, no card"},
+    "gemini/gemma-4-26b-a4b-it": {"in": 0.00, "out": 0.00, "note": "free tier (AI Studio), open weights"},
+    "gemini/gemma-4-31b-it": {"in": 0.00, "out": 0.00, "note": "free tier (AI Studio), open weights"},
     "gemini/gemini-3.6-flash": {"in": 0.00, "out": 0.00, "note": "free tier (AI Studio)"},
+    "gemini/gemini-3.1-flash-lite": {"in": 0.00, "out": 0.00, "note": "free tier (AI Studio)"},
     "gemini/gemini-flash-latest": {"in": 0.00, "out": 0.00, "note": "free tier (AI Studio)"},
     "groq/qwen/qwen3.8-27b": {"in": 0.80, "out": 4.00, "note": "free tier, preview"},
 }
@@ -209,14 +212,22 @@ def build_html(out_path: Optional[str] = None) -> Optional[str]:
         price = PRICING.get(model, {})
         p50 = a.get("latency_ms_p50")
         p95 = a.get("latency_ms_p95")
+        # Built outside the f-string: nesting the same quote character is
+        # 3.12+ syntax and this has to parse on 3.9.
+        p50_s = f"{p50 / 1000:.1f}s" if p50 else "—"
+        p95_s = f"{p95 / 1000:.1f}s" if p95 else "—"
+        # An unlisted model must not render as $0.000 - that reads as "free"
+        # when it actually means "no published price was recorded".
+        in_s = f"${price['in']:.3f}" if "in" in price else "—"
+        out_s = f"${price['out']:.3f}" if "out" in price else "—"
         cost_rows += (
             f"<tr><td>{AGENT_LABEL[agent]}</td>"
             f"<td class='mono'>{model or '—'}</td>"
-            f"<td class='num'>{f'{p50/1000:.1f}s' if p50 else '—'}</td>"
-            f"<td class='num'>{f'{p95/1000:.1f}s' if p95 else '—'}</td>"
-            f"<td class='num'>${price.get('in', 0):.3f}</td>"
-            f"<td class='num'>${price.get('out', 0):.3f}</td>"
-            f"<td>{price.get('note', '—')}</td></tr>")
+            f"<td class='num'>{p50_s}</td>"
+            f"<td class='num'>{p95_s}</td>"
+            f"<td class='num'>{in_s}</td>"
+            f"<td class='num'>{out_s}</td>"
+            f"<td>{price.get('note', 'list price not recorded')}</td></tr>")
 
     findings_html = "".join(
         f"<li><strong>{t}</strong> {d}</li>" for t, d in findings)
@@ -292,7 +303,7 @@ def build_html(out_path: Optional[str] = None) -> Optional[str]:
   </div>
 </div>
 
-<h2>Cost &amp; latency (open-source deployment)</h2>
+<h2>Cost &amp; latency — measured latency, published list prices</h2>
 <table>
   <tr><th>Agent</th><th>Model</th><th style="text-align:right">p50</th>
       <th style="text-align:right">p95</th><th style="text-align:right">$/1M in</th>

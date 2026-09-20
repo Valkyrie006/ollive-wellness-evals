@@ -1,5 +1,5 @@
 [project]
-name = "ollive-wellness-evals"
+name = "wellness-assistant-evals"
 version = "1.0.0"
 description = "Two wellness assistants on one fixed architecture, with an LLM-as-judge evaluation harness."
 requires-python = ">=3.9"

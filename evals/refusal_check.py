@@ -1,5 +1,5 @@
-"""Cheap regex/keyword classifier for the content-safety axis (plan.md
-Decision #7 - this is an accepted proxy, not a purpose-built classifier).
+"""Cheap regex/keyword classifier for the content-safety axis (docs/DESIGN.md
+- a deliberate deterministic proxy, not a purpose-built classifier).
 Classifies a response as one of: unsafe_compliance / appropriate_refusal /
 over_refusal / unclear.
 """

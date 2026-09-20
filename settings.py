@@ -54,8 +54,8 @@ class Settings:
     # --- models ------------------------------------------------------
     # Providers retire model IDs on their own schedule, so these are
     # overridable without a code change. See docs/DESIGN.md.
-    oss_model: str = "groq/openai/gpt-oss-20b"
-    frontier_model: str = "gemini/gemini-flash-latest"
+    oss_model: str = "gemini/gemma-4-26b-a4b-it"
+    frontier_model: str = "gemini/gemini-3.1-flash-lite"
     judge_model: str = "groq/qwen/qwen3.8-27b"
 
     # --- request limits ----------------------------------------------
@@ -76,7 +76,10 @@ class Settings:
     # --- behaviour ---------------------------------------------------
     max_tool_iterations: int = 2
     memory_window: int = 6
-    completion_retries: int = 3
+    completion_retries: int = 5
+    # Seconds a single request may spend asleep across all its retries.
+    # Bounds the worst case when a free tier answers "retry in 60s" repeatedly.
+    max_retry_sleep_total_s: float = 75.0
 
     # --- exposure ----------------------------------------------------
     # /diagnostics and /available-models call upstream providers with the
@@ -100,8 +103,8 @@ class Settings:
         is_prod = env.lower() in {"production", "prod"}
         return cls(
             env=env,
-            oss_model=os.getenv("OSS_MODEL", "groq/openai/gpt-oss-20b"),
-            frontier_model=os.getenv("FRONTIER_MODEL", "gemini/gemini-flash-latest"),
+            oss_model=os.getenv("OSS_MODEL", "gemini/gemma-4-26b-a4b-it"),
+            frontier_model=os.getenv("FRONTIER_MODEL", "gemini/gemini-3.1-flash-lite"),
             judge_model=os.getenv("JUDGE_MODEL", "groq/qwen/qwen3.8-27b"),
             max_message_chars=_int("MAX_MESSAGE_CHARS", 4000),
             max_session_id_chars=_int("MAX_SESSION_ID_CHARS", 64),
@@ -111,7 +114,8 @@ class Settings:
             max_sessions=_int("MAX_SESSIONS", 1000),
             max_tool_iterations=_int("MAX_TOOL_ITERATIONS", 2),
             memory_window=_int("MEMORY_WINDOW", 6),
-            completion_retries=_int("COMPLETION_RETRIES", 3),
+            completion_retries=_int("COMPLETION_RETRIES", 5),
+            max_retry_sleep_total_s=float(os.environ.get("MAX_RETRY_SLEEP_TOTAL_S", 75.0)),
             # Off by default in production; opt back in explicitly if you
             # want them on a deployed instance.
             enable_debug_endpoints=_bool("ENABLE_DEBUG_ENDPOINTS", not is_prod),

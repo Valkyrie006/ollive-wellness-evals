@@ -91,3 +91,20 @@ def test_every_module_parses_as_python_39():
         except SyntaxError as e:
             failures.append(f"{path.relative_to(PROJECT_ROOT)}: {e}")
     assert not failures, "not valid Python 3.9 syntax:\n" + "\n".join(failures)
+
+
+def test_provider_and_key_are_derived_from_the_model_id():
+    """Regression: provider and api_key_env used to be hardcoded per agent,
+    so overriding OSS_MODEL to a Gemini-hosted model still sent the Groq key
+    to Google - an auth error that pointed at the wrong cause entirely."""
+    from agents.config import PROVIDER_KEY_ENV, _agent_config, provider_of
+
+    assert provider_of("gemini/gemma-4-31b-it") == "gemini"
+    assert provider_of("groq/openai/gpt-oss-20b") == "groq"
+
+    cfg = _agent_config("oss", "gemini/gemma-4-31b-it")
+    assert cfg["provider"] == "gemini"
+    assert cfg["api_key_env"] == "GOOGLE_API_KEY"
+
+    # an unprefixed or unknown model must not silently pick a wrong key
+    assert provider_of("some-bare-model") in PROVIDER_KEY_ENV

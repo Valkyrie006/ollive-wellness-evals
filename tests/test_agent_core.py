@@ -65,7 +65,7 @@ def test_run_turn_updates_short_term_memory_across_turns():
 
 
 def test_run_turn_recovers_from_malformed_tool_call_json():
-    """Per plan.md Decision #3: smaller OSS models occasionally emit
+    """Smaller open models occasionally emit
     malformed tool-call JSON. Confirm a broken arguments string doesn't
     crash the loop - it should be caught and logged as a tool error, and
     the assistant should still produce a final answer.
@@ -216,3 +216,73 @@ def test_final_pass_nudges_a_tool_happy_model_into_answering():
     # the stored conversation the user sees next turn
     stored = core.get_history("greedy-1")
     assert not any("Do not call any more tools" in (m.get("content") or "") for m in stored)
+
+
+def test_a_failing_tool_is_short_circuited_after_its_first_failure(monkeypatch):
+    """Regression: a broken web-search backend once turned ~10s evaluation
+    items into ~3-minute ones, because the model kept reaching for the dead
+    tool and each attempt paid the full network timeout again. The tool must
+    be called once; every later request in the same turn is answered from
+    the recorded failure without touching the network."""
+    core.SESSIONS.clear()
+    coll = setup_kb()
+
+    calls = {"n": 0}
+
+    def exploding_search(**kwargs):
+        calls["n"] += 1
+        raise RuntimeError("web search failed (lite: timeout; html: timeout)")
+
+    monkeypatch.setattr(core, "search_web", exploding_search)
+
+    # a model that stubbornly asks for the same broken tool on every
+    # iteration the loop allows it
+    script = [
+        FakeMessage(tool_calls=[FakeToolCall(f"c{i}", "search_web", '{"query": "a"}')])
+        for i in range(core.MAX_TOOL_ITERATIONS)
+    ] + [FakeMessage(content="Here's what I can tell you without the web.")]
+
+    result = core.run_turn(
+        session_id="cb1",
+        user_message="any recent news on sleep research?",
+        model_config={"model": "fake/model"},
+        api_key=None,
+        coll=coll,
+        embed_fn=fake_embed_fn,
+        completion_fn=make_scripted_completion_fn(script),
+    )
+
+    assert calls["n"] == 1, "the failing tool must be attempted only once per turn"
+    assert result["response"] == "Here's what I can tell you without the web."
+    # the model is told why, on every subsequent attempt
+    later = [t for t in result["tool_calls"][1:]]
+    assert later and all("already failed" in (t["result"].get("note") or "") for t in later)
+
+
+def test_circuit_breaker_does_not_block_a_different_healthy_tool(monkeypatch):
+    core.SESSIONS.clear()
+    coll = setup_kb()
+
+    monkeypatch.setattr(core, "search_web",
+                        lambda **kw: (_ for _ in ()).throw(RuntimeError("no network")))
+
+    script = [
+        FakeMessage(tool_calls=[FakeToolCall("c1", "search_web", '{"query": "a"}')]),
+        FakeMessage(tool_calls=[FakeToolCall("c2", "lookup_kb", '{"query": "sleep", "k": 2}')]),
+        FakeMessage(content="Grounded in the knowledge base instead."),
+    ]
+
+    result = core.run_turn(
+        session_id="cb2",
+        user_message="how do I sleep better?",
+        model_config={"model": "fake/model"},
+        api_key=None,
+        coll=coll,
+        embed_fn=fake_embed_fn,
+        completion_fn=make_scripted_completion_fn(script),
+    )
+
+    assert result["response"] == "Grounded in the knowledge base instead."
+    kb_call = result["tool_calls"][1]
+    assert kb_call["name"] == "lookup_kb"
+    assert "error" not in kb_call["result"], "a healthy tool must be unaffected"

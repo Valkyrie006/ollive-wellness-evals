@@ -11,8 +11,8 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:?set GOOGLE_API_KEY in your environment or .env}
       # Model IDs are overridable because providers retire them; see
       # docs/DESIGN.md.
-      OSS_MODEL: ${OSS_MODEL:-groq/openai/gpt-oss-20b}
-      FRONTIER_MODEL: ${FRONTIER_MODEL:-gemini/gemini-3.6-flash}
+      OSS_MODEL: ${OSS_MODEL:-gemini/gemma-4-26b-a4b-it}
+      FRONTIER_MODEL: ${FRONTIER_MODEL:-gemini/gemini-3.1-flash-lite}
       JUDGE_MODEL: ${JUDGE_MODEL:-groq/qwen/qwen3.8-27b}
       RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-20}
       # Diagnostics call upstream with the server's key; opt in deliberately.

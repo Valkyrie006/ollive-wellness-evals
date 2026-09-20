@@ -7,7 +7,6 @@ an axis the evaluation scores, so it is a regression with a number attached.
 """
 from agents.guardrails import apply_output_guards, check_input
 
-
 # --------------------------------------------------------------------------
 # input guard - fires on attack shape, not on topic
 # --------------------------------------------------------------------------

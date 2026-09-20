@@ -27,6 +27,7 @@ jobs:
       - name: Fail on committed credentials
         run: |
           set -euo pipefail
+          # Provider key shapes: Groq (gsk_), Google (AIza), GitHub (ghp_/github_pat_).
           PATTERN='gsk_[A-Za-z0-9]{40,}|AIza[A-Za-z0-9_-]{30,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,}'
           if git log -p --all | grep -nE "$PATTERN"; then
             echo "::error::A credential-shaped string was found in git history."
@@ -44,9 +45,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.9 is the floor and is NOT optional: macOS ships 3.9 via the Xcode
-        # command line tools, and a 3.10-only idiom that imports fine but
-        # fails at runtime has already reached a running server here.
+        # 3.9 is the floor and is NOT optional: macOS ships 3.9 via the
+        # Xcode command line tools, and a 3.10-only idiom that imports fine
+        # but fails at runtime has already reached a running server here.
+        # 3.12 catches deprecations early.
         python-version: ["3.9", "3.12"]
 
     steps:
@@ -70,5 +72,6 @@ jobs:
 
       - name: Test
         # No API keys are set, by design - the suite must pass with every
-        # network dependency faked.
+        # network dependency faked. If a test needs a real key, that test is
+        # wrong.
         run: python -m pytest tests/ -q

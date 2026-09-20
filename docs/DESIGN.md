@@ -46,9 +46,13 @@ nowhere to put the difference.
 
 ## 2. Which models — and why they changed twice
 
-**Approach.** OSS: `openai/gpt-oss-20b` on Groq. Frontier:
-`gemini-3.6-flash` on Google AI Studio. Judge: `qwen3.8-27b` on Groq. All
-free tier, no card.
+**Approach.** OSS: `gemma-4-26b-a4b-it` on Google AI Studio (open weights).
+Frontier: `gemini-3.1-flash-lite` on Google AI Studio. Judge:
+`qwen3.8-27b` on Groq. All free tier, no card.
+
+Read that as the *end state* of a sequence of forced moves, not a first
+choice — every change below was a provider constraint, and the sequence is
+the interesting part.
 
 **What happened.** The original picks (`llama-3.1-8b-instant`,
 `gemini-2.0-flash`) both broke during the build. Gemini had simply retired
@@ -56,21 +60,63 @@ the ID. Groq had moved Meta's Llama models to Enterprise "contact sales"
 access, so the error said `model_not_found` when the real meaning was *your
 key can't reach this*. Two different failures presenting as the same error.
 
+**Then the frontier pick changed again, and the reason matters.** The first
+working replacement, `gemini-3.6-flash`, was not rate-limited so much as
+unusable on the free tier: a 62s p50 and a 48% error rate, which is not a
+model you can measure. `gemini-flash-latest` exhausted its free request
+quota partway through a run. The 2.5-series IDs return 404 through
+LiteLLM's Gemini route. `gemini-3.1-flash-lite` carries a larger free quota
+and answers in ~9s, so it is the one the committed results were produced
+on. That is a **free-tier availability** decision, not a claim that it is
+the strongest frontier model — and it is a real limitation of these
+results, recorded in the report rather than hidden: the frontier side of
+the comparison is whichever frontier model a no-card key can actually
+complete a run on.
+
 **The structural fix.** Model IDs now come from the environment with
 defaults, and `/available-models` asks each provider what your key can
 actually call. A retirement is a `.env` edit, not a code change — and
 `/diagnostics` attaches the live model list to a not-found error, so the
 answer appears at the moment of failure.
 
+**And then the OSS pick changed, for a reason that could not be engineered
+around.** `gpt-oss-20b` on Groq worked and produced a complete set of
+results. Then Groq's free tier hit its **per-day** token cap:
+
+```
+Rate limit reached for model `openai/gpt-oss-20b` ... service tier
+`on_demand` on tokens per day (TPD): Limit 200000, Used 199367.
+Please try again in 2m49.776s.
+```
+
+A per-day cap refills as a trickle. A full evaluation costs far more than
+trickles back, so no amount of patience inside a run clears it. The
+open-weights agent moved to **`gemma-4-26b-a4b-it`** on Google AI Studio:
+open weights, free, no card, supports the tool calling this architecture
+requires, ~20s per turn. Its larger sibling `gemma-4-31b-it` also works but
+takes ~76s per turn — unusable across a 44-item run, and worth recording
+because "it works" and "it is fast enough to measure" are different tests.
+
+**The honest cost of that move.** Both assistants now sit on Google AI
+Studio. This removes provider infrastructure as a confound — same serving
+stack, same API, so a latency gap is the model rather than the vendor — but
+open-vs-frontier is now compared *inside one vendor's lineup*, which is a
+narrower claim than a cross-vendor comparison. Setting
+`OSS_MODEL=groq/openai/gpt-oss-20b` restores the cross-vendor setup on a
+key with daily tokens to spare.
+
 **On the judge.** The judge must not share a model family with either agent,
-or it scores its own family favourably (self-preference bias). Moving the
-OSS agent onto GPT-OSS forced the judge off it, onto Qwen. That leaves three
-distinct families: Qwen judging GPT-OSS and Gemini.
+or it scores its own family favourably (self-preference bias). With both
+agents on Google, the judge *cannot* be a Gemini or Gemma model — which is
+precisely why it stayed on Groq even after both agents left. That works
+because the judge is now Groq's only consumer here and spends a few hundred
+tokens per call, which fits inside what the free tier refills.
 
 > ⚠️ **Known risk.** Qwen is in Groq's *Preview* tier and can be withdrawn at
-> short notice. The fallback is `openai/gpt-oss-120b`, but that shares a
-> family with the OSS agent, and if you use it the self-preference caveat
-> belongs in the evaluation report.
+> short notice. The fallback is `openai/gpt-oss-120b` — a different family
+> from both agents, so the self-preference concern does not apply. What must
+> *not* be used as judge here is any Gemini or Gemma model, since that would
+> share a family with both subjects at once.
 
 ---
 
@@ -426,6 +472,104 @@ scorecard carries a `valid` flag that goes false past a 20% error rate — a
 run that lost a third of its items is not a measurement, and a scorecard
 that doesn't say so invites someone to quote it.
 
+
+---
+
+## 20. Web search: three backends, and the bug that hid behind a silent zero
+
+**Approach.** `search_web` tries DuckDuckGo's `lite` endpoint, then the
+`html` endpoint, then the `ddgs` library, and returns the first that yields
+results. Every failure is collected and reported together.
+
+**What happened.** `/diagnostics` reported `web_search: returned 0 results`
+while the exact same query opened fine in a browser. The cause: the code
+sent a **POST**, and DuckDuckGo answers a POST from a non-browser client
+with a challenge page that parses to zero results. A browser issues a GET,
+so the code now does too, with the headers a browser sends. The `lite`
+endpoint went first because its markup is a flat table — one
+`result-link` and one `result-snippet` per row — with no nested containers
+for a regex to fall out of step with.
+
+**Why it mattered far more than a broken tool usually does.** Web search
+sits *inside* a tool-calling loop. A failure that takes 20s is multiplied
+by the loop iterations and again by every item in an eval run: ~10s
+evaluation items became ~3-minute ones, and the latency column of the
+scorecard was quietly measuring a broken DuckDuckGo parser rather than the
+models. The fix has three parts, and only the first is the parser:
+
+1. GET instead of POST, and `lite` first.
+2. **Timeouts cut to 8s.** Inside a loop, failing fast and telling the
+   model beats hanging.
+3. **A per-tool circuit breaker** in `agents/core.py`: a tool that has
+   already failed this turn is not called again. The causes are
+   environmental — no network, a broken TLS stack, a blocked endpoint —
+   not query-dependent, so a retry buys nothing and costs the full timeout
+   again.
+
+**Alternatives.** A keyed search API (Brave, Serper, Tavily) is far more
+reliable than scraping, and is what production should use. All of them
+require a card or an account beyond the free-tier-no-card constraint this
+project set itself, so scraping with three fallbacks is the honest choice
+here — and the limitation belongs in the table below rather than in a
+footnote.
+
+---
+
+## 21. Bounded retry: a cap you cannot wait out
+
+**Approach.** A single request may spend at most `MAX_RETRY_SLEEP_TOTAL_S`
+(default 75s) asleep across all its retries. Past that, the provider's own
+error is raised.
+
+**Why.** Honouring a provider's retry hint is right, and unbounded
+honouring of it is not. Groq answered a rate limit with *"Please try again
+in 2h14m30s"* — a **per-day** token cap. Sleeping through that inside one
+request is impossible; without a budget the request simply never came back,
+and a caller cannot tell a throttled provider from a wedged server. The
+budget turns a multi-hour cap into an immediate, explanatory failure while
+still covering two rounds of the ~30s hint a per-minute limit gives, which
+is usually enough to get the item.
+
+**Also fixed here.** The retry-hint parser only understood Gemini's
+phrasing ("Please retry in 33.1s"). Groq words it differently
+("try again in 1m23.4s", "in 2h14m30s"), so Groq limits silently fell back
+to a blind 20s/40s/80s backoff that could never clear the cap. Both
+phrasings are parsed now, including hours.
+
+---
+
+## 22. Provider derived from the model ID
+
+**Approach.** `provider_of("gemini/gemma-4-26b-a4b-it")` → `gemini`, and
+the API key env var follows from the provider.
+
+**Why.** The provider and key used to be hardcoded per agent. That made the
+documented `OSS_MODEL` override a trap: pointing it at a Gemini-hosted
+model left the config still claiming provider `groq`, so the app sent the
+Groq key to Google and failed with `API key not valid` — an error that
+points at the key rather than at the mismatch. The model ID already names
+its provider, so one source of truth removes the whole class of failure.
+`evals/runner.py` pacing is keyed by provider for the same reason: the rate
+limit belongs to the provider, and pacing an agent called "oss" at 4s was
+correct while it ran on Groq and wrong the moment it moved.
+
+---
+
+## 23. Logging to a file, not just to a terminal
+
+**Approach.** A rotating file handler writes to `logs/app.log` alongside
+console logging.
+
+**Why.** The hardest bug in this project — a provider throttling
+completions while its model-list endpoint answered normally — was invisible
+for an hour because the only record of the retry warnings was scrolling
+past in a terminal nobody was reading. The provider's full message names
+the limit type (`tokens per day (TPD): Limit 200000, Used 199367`), which
+is the difference between "wait a minute" and "come back tomorrow", so the
+log keeps 600 characters of it rather than the 160 that had been truncating
+exactly that detail away. A long eval run is unattended by definition; it
+needs a durable record.
+
 ---
 
 ## Summary of known limitations
@@ -442,3 +586,6 @@ that doesn't say so invites someone to quote it.
 | Small eval samples (12 per axis) | One item moves a rate by several points | Scale to 100+ per axis |
 | Judge is a single model | No cross-judge consensus | Second judge family, report disagreement |
 | Eval endpoints are debug-gated, not authenticated | Anyone with debug on can spend your quota | Auth before enabling on a deployment |
+| Web search scrapes DuckDuckGo | Markup changes break it; no SLA | A keyed search API (Brave/Serper/Tavily) once a card is acceptable |
+| Both agents run on one provider | Open-vs-frontier compared inside one vendor's lineup | `OSS_MODEL=groq/openai/gpt-oss-20b` on a key with daily tokens to spare |
+| Free-tier daily token caps | A full run can become impossible mid-day | Paid tier, or split runs across days and merge scorecards |

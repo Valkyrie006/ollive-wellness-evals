@@ -11,9 +11,11 @@ endpoints that are off by default outside development.
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -31,6 +33,26 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
+
+# Also log to a file, not only to whatever terminal happens to be attached.
+#
+# This is not a nicety: the hardest bug in this project (a provider
+# throttling completions while its model-list endpoint answered normally)
+# was invisible for an hour precisely because the only record of the retry
+# warnings was scrolling past in a terminal nobody was reading. A long eval
+# run is unattended by definition, so it needs a durable record.
+_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+try:
+    os.makedirs(_LOG_DIR, exist_ok=True)
+    _file_handler = RotatingFileHandler(
+        os.path.join(_LOG_DIR, "app.log"), maxBytes=5_000_000, backupCount=2,
+    )
+    _file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+    logging.getLogger().addHandler(_file_handler)
+except OSError:  # read-only deployment - console logging still works
+    pass
+
 logger = logging.getLogger("wellness.api")
 
 rate_limiter = RateLimiter(

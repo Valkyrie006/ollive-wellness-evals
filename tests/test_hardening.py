@@ -101,3 +101,106 @@ def test_returned_history_is_a_copy():
     store.set("s1", [{"role": "user", "content": "hi"}])
     store.get("s1").append({"role": "user", "content": "injected"})
     assert len(store.get("s1")) == 1
+
+
+# --------------------------------------------------------------------------
+# provider retry hints
+# --------------------------------------------------------------------------
+
+def test_reads_geminis_retry_hint():
+    """Gemini answers a 429 with the exact wait. Guessing instead of reading
+    it is what turned a 20-requests-per-minute limit into a run that lost
+    most of its items."""
+    from agents.core import retry_after_seconds
+    err = Exception('429 You exceeded your current quota ... '
+                    'Please retry in 33.136598459s.')
+    assert retry_after_seconds(err) == 33.136598459
+
+
+def test_reads_retry_delay_field():
+    from agents.core import retry_after_seconds
+    assert retry_after_seconds(Exception('{"retryDelay": "27s"}')) == 27.0
+
+
+def test_returns_none_when_no_hint_is_given():
+    """Falls back to exponential backoff rather than inventing a number."""
+    from agents.core import retry_after_seconds
+    assert retry_after_seconds(Exception("connection reset by peer")) is None
+
+
+def test_honours_the_hint_instead_of_exponential_backoff(monkeypatch):
+    import agents.core as core
+
+    slept = []
+    monkeypatch.setattr(core.time, "sleep", lambda s: slept.append(s))
+    calls = {"n": 0}
+
+    def rate_limited_twice(**kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("429 quota exceeded. Please retry in 30s.")
+        return "ok"
+
+    assert core._completion_with_retry(rate_limited_twice) == "ok"
+    # 31s each (hint + 1s buffer), NOT 20s then 40s
+    assert slept == [31.0, 31.0], slept
+
+
+def test_retry_sleep_is_bounded_so_a_throttled_provider_cannot_hang_a_request(monkeypatch):
+    """A free tier that keeps answering "retry in 60s" must not turn one
+    request into a multi-minute hang. Past the sleep budget the provider's
+    own error is raised, so the caller gets a cause instead of silence."""
+    import agents.core as core
+
+    slept = []
+    monkeypatch.setattr(core.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(core, "MAX_RETRY_SLEEP_TOTAL_S", 75.0)
+    calls = {"n": 0}
+
+    def always_rate_limited(**kwargs):
+        calls["n"] += 1
+        raise RuntimeError("429 quota exceeded. Please retry in 60s.")
+
+    try:
+        core._completion_with_retry(always_rate_limited)
+    except RuntimeError as e:
+        assert "429" in str(e), "the provider's own error must survive"
+    else:
+        raise AssertionError("expected the provider error to be raised")
+
+    assert sum(slept) <= 75.0, f"slept {sum(slept)}s, over budget"
+    # it stopped on the budget, not on running out of attempts
+    assert calls["n"] < core.MAX_COMPLETION_RETRIES
+
+
+def test_reads_groqs_retry_hint_including_a_multi_hour_daily_cap():
+    """Groq words its 429 differently from Gemini. Matching only Gemini's
+    phrasing meant a Groq limit fell back to a blind 20s/40s backoff that
+    could never clear a per-day cap."""
+    from agents.core import retry_after_seconds
+    assert retry_after_seconds(
+        Exception("Rate limit reached ... Please try again in 1m23.4s")) == 83.4
+    assert retry_after_seconds(
+        Exception("Rate limit reached ... Please try again in 2h14m30s")) == 8070.0
+    assert retry_after_seconds(Exception("Please try again in 45.2s")) == 45.2
+
+
+def test_a_multi_hour_cap_fails_fast_rather_than_sleeping_through_it(monkeypatch):
+    """A per-day cap can't be waited out inside one request. The budget must
+    turn it into an immediate, explanatory failure."""
+    import agents.core as core
+
+    slept = []
+    monkeypatch.setattr(core.time, "sleep", lambda s: slept.append(s))
+
+    def daily_cap(**kwargs):
+        raise RuntimeError("429 Rate limit reached for model X on tokens per day "
+                           "(TPD). Please try again in 2h14m30s")
+
+    try:
+        core._completion_with_retry(daily_cap)
+    except RuntimeError as e:
+        assert "per day" in str(e)
+    else:
+        raise AssertionError("expected the provider error to be raised")
+    assert slept == [], "must not sleep at all when the hint exceeds the budget"

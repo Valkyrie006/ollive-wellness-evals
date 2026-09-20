@@ -1,6 +1,6 @@
 """Chunk the 9 provided wellness .md files, embed them, and load them into an
-in-memory Chroma collection (see plan.md, Decision #6 - no persistence needed
-for a same-day POC).
+in-memory Chroma collection (see docs/DESIGN.md - no persistence needed at
+this corpus size).
 
 The embedder is injected (`embed_fn`) rather than hard-imported at module
 load time so this module can be unit-tested without downloading model
