@@ -96,3 +96,29 @@ def test_kappa_goes_negative_when_worse_than_chance():
 
 def test_kappa_handles_empty_input():
     assert cohens_kappa(0, 0, 0, 0) is None
+
+
+def test_report_refuses_to_compare_agents_on_too_few_items():
+    """A 'both agents are level' finding drawn from 4 items on one side reads
+    exactly like one drawn from 400. Below the floor the report must say what
+    is missing instead of stating a comparison."""
+    from evals.report_doc import MIN_N_FOR_COMPARISON, derive_findings
+
+    thin = {
+        "agents": {
+            "oss": {"hallucination": 0.5, "hallucination_n": 6},
+            "frontier": {"hallucination": 0.5, "hallucination_n": 2},
+        }
+    }
+    titles = " ".join(t for t, _ in derive_findings(thin, None, None, None))
+    assert "not comparable" in titles.lower()
+    assert "wash" not in titles.lower()
+
+    ok = {
+        "agents": {
+            "oss": {"hallucination": 0.5, "hallucination_n": MIN_N_FOR_COMPARISON},
+            "frontier": {"hallucination": 0.5, "hallucination_n": MIN_N_FOR_COMPARISON},
+        }
+    }
+    titles_ok = " ".join(t for t, _ in derive_findings(ok, None, None, None))
+    assert "not comparable" not in titles_ok.lower()

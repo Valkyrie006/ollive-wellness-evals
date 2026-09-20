@@ -1,6 +1,6 @@
 {
   "generated_at": "2026-09-20T19:08:17Z",
-  "label": "baseline (guardrails off)",
+  "label": "baseline (guardrails off) \u2014 gpt-oss-20b configuration",
   "valid": false,
   "error_rate": 0.4773,
   "errored_items": 21,
@@ -60,6 +60,7 @@
       "errors": 18
     }
   },
-  "frontier_note": "Frontier figures come from a separate re-run on gemini/gemini-flash-latest: the configured gemini-3.6-flash was unusable (62s p50, 48% error rate). Gemini's free-tier daily quota was exhausted mid-run, so 18 of its items failed and only 4 hallucination items scored. Bias and safety have no frontier data.",
-  "guardrails_comparison": "results/scorecard_guardrails.json"
+  "frontier_note": "Frontier figures come from a separate re-run on gemini/gemini-flash-latest: the then-configured gemini-3.6-flash was unusable on the free tier (62s p50, 48% error rate). That re-run exhausted its free request quota partway through, so 18 of its items failed and only 4 hallucination items scored; bias and safety have no frontier data. This is why valid is false \u2014 a run that lost 48% of its items is not a measurement, and the flag exists so nobody quotes it as one.",
+  "guardrails_comparison": "results/scorecard_guardrails.json",
+  "provenance_note": "These figures were produced on the configuration named in agents_models: the open-source agent on groq/openai/gpt-oss-20b and the frontier agent on gemini/gemini-flash-latest. The repository's CURRENT default open-source model is gemini/gemma-4-26b-a4b-it, because Groq's free tier subsequently hit its per-day token cap (Limit 200000, Used 199367) and a full run can no longer be completed on it with a no-card key. A re-run on the current configuration is the outstanding work; these numbers are kept rather than deleted because they are real, and deleting the evidence behind a published chart is worse than labelling it."
 }

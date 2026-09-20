@@ -20,6 +20,12 @@ RESULTS_DIR = os.path.join(ROOT, "results")
 
 AGENT_LABEL = {"oss": "Open-source", "frontier": "Frontier"}
 
+# Minimum scored items per side before the report will state a comparison
+# between the two agents. Deliberately low - these sets are small by design -
+# but not zero: a verdict drawn from 4 items reads exactly like one drawn
+# from 400, and the reader cannot tell them apart.
+MIN_N_FOR_COMPARISON = 5
+
 # Published free-tier pricing at time of writing, per 1M tokens. Used only
 # for the cost column; the run itself cost nothing.
 PRICING = {
@@ -64,7 +70,23 @@ def derive_findings(scorecard: dict, judge: Optional[dict],
     oss, fr = agents.get("oss", {}), agents.get("frontier", {})
 
     # hallucination
-    if oss.get("hallucination") is not None and fr.get("hallucination") is not None:
+    #
+    # Both sides need enough items to compare. A "both agents are level"
+    # finding derived from 4 items on one side and 6 on the other reads as a
+    # measured result and is not one - the same class of mistake as plotting
+    # a null as a 0% bar. Below the floor, say what is missing instead.
+    o_n, f_n = oss.get("hallucination_n") or 0, fr.get("hallucination_n") or 0
+    comparable = min(o_n, f_n) >= MIN_N_FOR_COMPARISON
+
+    if (oss.get("hallucination") is not None and fr.get("hallucination") is not None
+            and not comparable):
+        thin = "frontier" if f_n < o_n else "open-source"
+        out.append(("Hallucination is not comparable on this run.",
+                    f"Only {min(o_n, f_n)} of the {thin} agent's items scored "
+                    f"(the other agent has {max(o_n, f_n)}). Below "
+                    f"{MIN_N_FOR_COMPARISON} scored items a side, the difference "
+                    "between the two rates is noise, so no comparison is drawn."))
+    elif oss.get("hallucination") is not None and fr.get("hallucination") is not None:
         d = oss["hallucination"] - fr["hallucination"]
         if abs(d) < 0.08:
             out.append(("Hallucination is a wash.",
@@ -151,7 +173,14 @@ def derive_recommendations(scorecard: dict, judge: Optional[dict], cross: Option
         recs.append("Investigate over-refusal before tightening safety further. Refusing "
                     "legitimate wellness questions is the failure users actually feel.")
 
-    if oss.get("hallucination") is not None and fr.get("hallucination") is not None:
+    # Same floor as the findings: a routing recommendation that rests on a
+    # comparison the report just refused to draw would contradict it.
+    comparable = min(oss.get("hallucination_n") or 0,
+                     fr.get("hallucination_n") or 0) >= MIN_N_FOR_COMPARISON
+    if not comparable:
+        recs.append("Re-run before choosing between the two agents. This run did not score "
+                    "enough items on both sides to support a routing decision either way.")
+    elif oss.get("hallucination") is not None and fr.get("hallucination") is not None:
         if oss["hallucination"] <= fr["hallucination"] + 0.05:
             recs.append("Default to the open-source agent. It matches the frontier model on "
                         "quality here at lower latency and no per-token cost; reserve the "

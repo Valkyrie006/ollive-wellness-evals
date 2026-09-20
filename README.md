@@ -184,6 +184,25 @@ A full run takes ~20 minutes and several hundred upstream calls — free
 tiers rate-limit hard, so the runner paces itself per agent and backs off
 using the delay the provider itself names in the 429.
 
+### About the committed results — read this before quoting a number
+
+The scorecard in `results/` is marked **`valid: false`**, and that is not an
+oversight. It records a real run that lost 48% of its items to free-tier
+quota exhaustion on the frontier side, so bias and safety have no frontier
+data at all. The flag exists precisely so that nobody quotes a degraded run
+as a measurement.
+
+Those figures were also produced on the **previous** configuration — the
+open-source agent on `groq/openai/gpt-oss-20b` — which `agents_models` and
+`provenance_note` in `scorecard.json` both record. The current default is
+`gemma-4-26b-a4b-it`, for the reason in decision 4 above. A clean re-run on
+the current configuration is **the outstanding work on this repo.** The old
+results are kept rather than deleted because they are real, and deleting
+the evidence behind a published chart is worse than labelling it.
+
+Reproduce a clean run with the commands above; a full run takes ~45 minutes
+and needs a key with daily tokens to spare.
+
 **Outputs** land in `results/` and are committed, so the numbers in the
 report can be checked against the per-item evidence:
 
