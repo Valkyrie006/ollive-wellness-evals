@@ -2,6 +2,8 @@
 per agent) from results/scorecard.json - the infographic for the 1-page
 evaluation report (plan.md Section 5 / deliverable #3).
 """
+from __future__ import annotations
+
 import json
 import os
 

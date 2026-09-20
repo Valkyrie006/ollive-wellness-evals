@@ -9,6 +9,8 @@ All three are free-tier, no-card services (see plan.md, Decisions #3-#5):
 - Eval judge: gpt-oss-20b via Groq (different family from both assistants,
   so it doesn't share a family with either one and risk self-preference bias)
 """
+from __future__ import annotations
+
 import os
 
 OSS_CONFIG = {

@@ -2,6 +2,8 @@
 Groq's gpt-oss-20b instead (plan.md Decision #5: free, and a different model
 family from both assistants, which avoids self-preference bias).
 """
+from __future__ import annotations
+
 from deepeval.models.base_model import DeepEvalBaseLLM
 
 

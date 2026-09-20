@@ -1,79 +1,690 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="auto">
 <head>
 <meta charset="UTF-8">
-<title>Wellness Assistant POC</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wellness Assistant</title>
 <style>
-  body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
-  #agent-toggle { margin-bottom: 12px; }
-  #messages { border: 1px solid #ddd; border-radius: 8px; padding: 12px; height: 420px; overflow-y: auto; margin-bottom: 12px; }
-  .msg { margin: 8px 0; padding: 8px 12px; border-radius: 8px; max-width: 80%; }
-  .user { background: #DCF0FF; margin-left: auto; text-align: right; }
-  .assistant { background: #F0F0F0; }
-  .tool-note { font-size: 11px; color: #888; margin-top: 4px; }
-  #input-row { display: flex; gap: 8px; }
-  #input-row input { flex: 1; padding: 8px; }
+  :root {
+    --bg: #f6f8f7;
+    --surface: #ffffff;
+    --surface-2: #eef2f0;
+    --border: #dfe5e2;
+    --text: #15201c;
+    --text-dim: #64756e;
+    --accent: #2c7d6a;
+    --accent-soft: #e3f1ed;
+    --user-bubble: #2c7d6a;
+    --user-text: #ffffff;
+    --danger: #a5251c;
+    --danger-soft: #fdecea;
+    --danger-border: #f3c9c4;
+    --ok: #1c7a43;
+    --ok-soft: #e6f5ec;
+    --warn: #8a6100;
+    --warn-soft: #fdf4e3;
+    --shadow: 0 1px 2px rgba(20,40,34,.05), 0 10px 30px rgba(20,40,34,.07);
+    --radius: 14px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1412;
+      --surface: #151d1a;
+      --surface-2: #1c2622;
+      --border: #28332f;
+      --text: #e7efec;
+      --text-dim: #91a29b;
+      --accent: #5cbfa4;
+      --accent-soft: #16302a;
+      --user-bubble: #2c7d6a;
+      --user-text: #ffffff;
+      --danger: #ff9b92;
+      --danger-soft: #2b1715;
+      --danger-border: #4a2723;
+      --ok: #6ad399;
+      --ok-soft: #14291d;
+      --warn: #e2b45c;
+      --warn-soft: #2a2214;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1412;
+    --surface: #151d1a;
+    --surface-2: #1c2622;
+    --border: #28332f;
+    --text: #e7efec;
+    --text-dim: #91a29b;
+    --accent: #5cbfa4;
+    --accent-soft: #16302a;
+    --user-bubble: #2c7d6a;
+    --user-text: #ffffff;
+    --danger: #ff9b92;
+    --danger-soft: #2b1715;
+    --danger-border: #4a2723;
+    --ok: #6ad399;
+    --ok-soft: #14291d;
+    --warn: #e2b45c;
+    --warn-soft: #2a2214;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    justify-content: center;
+    padding: 24px 16px;
+  }
+  .app {
+    width: 100%;
+    max-width: 780px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .mark {
+    width: 38px; height: 38px;
+    border-radius: 11px;
+    background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #9ad9c5));
+    display: grid; place-items: center;
+    flex: none;
+  }
+  .mark svg { width: 21px; height: 21px; }
+  .titles { flex: 1; min-width: 160px; }
+  h1 { font-size: 17px; margin: 0; letter-spacing: -.01em; font-weight: 640; }
+  .sub { font-size: 12.5px; color: var(--text-dim); margin-top: 1px; }
+  .icon-btn {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-dim);
+    border-radius: 9px;
+    height: 34px;
+    padding: 0 11px;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+  .icon-btn svg { width: 14px; height: 14px; }
+
+  /* ---------- agent switcher ---------- */
+  .switcher {
+    display: flex;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    padding: 3px;
+    gap: 3px;
+  }
+  .switcher button {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 540;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    transition: background .16s, color .16s;
+  }
+  .switcher button .model { font-size: 11px; font-weight: 440; opacity: .75; }
+  .switcher button[aria-pressed="true"] {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 1px 2px rgba(0,0,0,.08);
+  }
+
+  /* ---------- chat ---------- */
+  .chat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    min-height: 460px;
+    overflow: hidden;
+  }
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .row { display: flex; }
+  .row.user { justify-content: flex-end; }
+  .bubble {
+    max-width: 84%;
+    padding: 10px 14px;
+    border-radius: 16px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    animation: rise .22s ease;
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+  .row.user .bubble {
+    background: var(--user-bubble);
+    color: var(--user-text);
+    border-bottom-right-radius: 5px;
+  }
+  .row.assistant .bubble {
+    background: var(--surface-2);
+    border-bottom-left-radius: 5px;
+  }
+
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; align-items: center; }
+  .chip {
+    font-size: 11px;
+    font-weight: 560;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+    cursor: pointer;
+    font-family: var(--mono);
+  }
+  .chip.plain { background: transparent; border-color: var(--border); color: var(--text-dim); cursor: default; font-weight: 500; }
+  details.tools { margin-top: 8px; }
+  details.tools summary { cursor: pointer; font-size: 11.5px; color: var(--text-dim); }
+  details.tools pre {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 9px 11px;
+    overflow-x: auto;
+    margin: 7px 0 0;
+    max-height: 240px;
+  }
+
+  /* ---------- error card ---------- */
+  .error-card {
+    background: var(--danger-soft);
+    border: 1px solid var(--danger-border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    max-width: 92%;
+  }
+  .error-card .head { font-weight: 640; font-size: 13px; color: var(--danger); display: flex; align-items: center; gap: 6px; }
+  .error-card pre {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 8px 0 0;
+    color: var(--text);
+    opacity: .85;
+  }
+  .error-card .hint { font-size: 12px; color: var(--text-dim); margin-top: 9px; }
+
+  /* ---------- typing ---------- */
+  .typing { display: flex; gap: 4px; padding: 13px 15px; }
+  .typing i {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-dim); display: block;
+    animation: blink 1.3s infinite;
+  }
+  .typing i:nth-child(2) { animation-delay: .18s; }
+  .typing i:nth-child(3) { animation-delay: .36s; }
+  @keyframes blink { 0%,60%,100% { opacity: .25; } 30% { opacity: .95; } }
+
+  /* ---------- empty state ---------- */
+  .empty { margin: auto; text-align: center; padding: 26px 10px; max-width: 460px; }
+  .empty h2 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+  .empty p { font-size: 13px; color: var(--text-dim); margin: 0 0 16px; }
+  .suggestions { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; }
+  .suggestions button {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 7px 13px;
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .suggestions button:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+  /* ---------- composer ---------- */
+  .composer {
+    border-top: 1px solid var(--border);
+    padding: 11px;
+    display: flex;
+    gap: 9px;
+    background: var(--surface);
+  }
+  .composer textarea {
+    flex: 1;
+    resize: none;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    border-radius: 11px;
+    padding: 10px 13px;
+    font: inherit;
+    max-height: 132px;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .composer textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  .send {
+    border: 0;
+    background: var(--accent);
+    color: #fff;
+    width: 42px;
+    border-radius: 11px;
+    cursor: pointer;
+    display: grid; place-items: center;
+    flex: none;
+    transition: opacity .15s, transform .1s;
+  }
+  .send:hover:not(:disabled) { opacity: .9; }
+  .send:active:not(:disabled) { transform: scale(.95); }
+  .send:disabled { opacity: .4; cursor: not-allowed; }
+  .send svg { width: 17px; height: 17px; }
+
+  /* ---------- diagnostics ---------- */
+  #diag { display: none; }
+  #diag.open { display: block; }
+  .diag-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 15px 17px;
+  }
+  .diag-card h3 { margin: 0 0 3px; font-size: 14px; font-weight: 620; }
+  .diag-card .note { font-size: 12px; color: var(--text-dim); margin: 0 0 13px; }
+  .diag-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 9px 0;
+    border-top: 1px solid var(--border);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; flex: none; }
+  .dot.ok { background: var(--ok); }
+  .dot.error { background: var(--danger); }
+  .dot.missing_key { background: var(--warn); }
+  .diag-row .body { flex: 1; min-width: 0; }
+  .diag-row .label { font-size: 13px; font-weight: 570; }
+  .diag-row .value { font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); margin-top: 2px; word-break: break-word; }
+  .diag-row .detail {
+    font-size: 11.5px; font-family: var(--mono); margin-top: 6px;
+    background: var(--danger-soft); color: var(--text);
+    border: 1px solid var(--danger-border); border-radius: 8px;
+    padding: 7px 9px; white-space: pre-wrap; word-break: break-word;
+  }
+  footer { text-align: center; font-size: 11.5px; color: var(--text-dim); }
 </style>
 </head>
 <body>
-  <h2>Wellness Assistant POC</h2>
-  <div id="agent-toggle">
-    Agent:
-    <select id="agent">
-      <option value="oss">OSS (Llama-3.1 via Groq)</option>
-      <option value="frontier">Frontier (Gemini Flash)</option>
-    </select>
+<div class="app">
+
+  <header>
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 21c0-5 3-8 8-8 0 5-3 8-8 8Z"/>
+        <path d="M12 21c0-5-3-8-8-8 0 5 3 8 8 8Z"/>
+        <path d="M12 21V9"/><path d="M12 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/>
+      </svg>
+    </div>
+    <div class="titles">
+      <h1>Wellness Assistant</h1>
+      <div class="sub">Two agents, one fixed architecture &middot; KB lookup + web search</div>
+    </div>
+    <button class="icon-btn" id="diag-btn" title="Check API keys, KB and tools">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      Diagnostics
+    </button>
+    <button class="icon-btn" id="new-btn" title="Clear this conversation">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      New chat
+    </button>
+    <button class="icon-btn" id="theme-btn" title="Toggle theme" aria-label="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+    </button>
+  </header>
+
+  <div class="switcher" role="group" aria-label="Choose agent">
+    <button data-agent="oss" aria-pressed="true">
+      Open-source
+      <span class="model">Llama&nbsp;3.1&nbsp;8B &middot; Groq</span>
+    </button>
+    <button data-agent="frontier" aria-pressed="false">
+      Frontier
+      <span class="model">Gemini&nbsp;Flash &middot; Google</span>
+    </button>
   </div>
-  <div id="messages"></div>
-  <div id="input-row">
-    <input id="input" type="text" placeholder="Ask about diet, exercise, sleep, meditation..." />
-    <button id="send">Send</button>
+
+  <div id="diag"><div class="diag-card" id="diag-card"></div></div>
+
+  <div class="chat">
+    <div id="messages"></div>
+    <div class="composer">
+      <textarea id="input" rows="1" placeholder="Ask about diet, exercise, sleep, meditation&hellip;"></textarea>
+      <button class="send" id="send" aria-label="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7Z"/></svg>
+      </button>
+    </div>
   </div>
+
+  <footer id="footer">Session <span id="sid"></span></footer>
+</div>
 
 <script>
-const sessionId = "session-" + Math.random().toString(36).slice(2);
+const SUGGESTIONS = [
+  "What does farm-to-table eating have to do with wellness?",
+  "What's the point of a wellness retreat?",
+  "How does time in nature affect wellbeing?",
+  "Any recent news on mindfulness apps?",
+];
+
+let sessionId = newSessionId();
+let agent = "oss";
+let busy = false;
+
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("input");
-const agentEl = document.getElementById("agent");
+const sendBtn = document.getElementById("send");
+const diagEl = document.getElementById("diag");
+const diagCard = document.getElementById("diag-card");
 
-function addMessage(role, text, note) {
-  const div = document.createElement("div");
-  div.className = "msg " + role;
-  div.textContent = text;
-  if (note) {
-    const n = document.createElement("div");
-    n.className = "tool-note";
-    n.textContent = note;
-    div.appendChild(n);
+function newSessionId() { return "s-" + Math.random().toString(36).slice(2, 10); }
+
+function renderEmptyState() {
+  messagesEl.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "empty";
+  wrap.innerHTML = `<h2>Ask the assistant anything about wellbeing</h2>
+    <p>It searches an internal knowledge base of 9 wellness guides first, and the live web when a question needs it.</p>`;
+  const sug = document.createElement("div");
+  sug.className = "suggestions";
+  SUGGESTIONS.forEach(text => {
+    const b = document.createElement("button");
+    b.textContent = text;
+    b.onclick = () => { inputEl.value = text; send(); };
+    sug.appendChild(b);
+  });
+  wrap.appendChild(sug);
+  messagesEl.appendChild(wrap);
+}
+
+function clearEmptyState() {
+  const e = messagesEl.querySelector(".empty");
+  if (e) e.remove();
+}
+
+function scrollDown() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+
+function addMessage(role, text) {
+  clearEmptyState();
+  const row = document.createElement("div");
+  row.className = "row " + role;
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.textContent = text;
+  row.appendChild(bubble);
+  messagesEl.appendChild(row);
+  scrollDown();
+  return bubble;
+}
+
+function addTyping() {
+  clearEmptyState();
+  const row = document.createElement("div");
+  row.className = "row assistant";
+  row.id = "typing-row";
+  row.innerHTML = `<div class="bubble typing"><i></i><i></i><i></i></div>`;
+  messagesEl.appendChild(row);
+  scrollDown();
+}
+function removeTyping() {
+  const t = document.getElementById("typing-row");
+  if (t) t.remove();
+}
+
+function addMeta(bubble, data) {
+  const meta = document.createElement("div");
+  meta.className = "meta";
+
+  const names = [...new Set(data.tool_calls.map(t => t.name))];
+  if (names.length) {
+    names.forEach(n => {
+      const c = document.createElement("span");
+      c.className = "chip";
+      c.textContent = n + "()";
+      c.title = "Click to see what this tool returned";
+      c.onclick = () => {
+        const d = bubble.querySelector("details.tools");
+        if (d) { d.open = !d.open; }
+      };
+      meta.appendChild(c);
+    });
+  } else {
+    const c = document.createElement("span");
+    c.className = "chip plain";
+    c.textContent = "no tools used";
+    meta.appendChild(c);
   }
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  const lat = document.createElement("span");
+  lat.className = "chip plain";
+  lat.textContent = (data.latency_ms / 1000).toFixed(1) + "s";
+  meta.appendChild(lat);
+
+  const who = document.createElement("span");
+  who.className = "chip plain";
+  who.textContent = data.agent;
+  meta.appendChild(who);
+
+  bubble.appendChild(meta);
+
+  if (data.tool_calls.length) {
+    const det = document.createElement("details");
+    det.className = "tools";
+    det.innerHTML = `<summary>Tool call details (${data.tool_calls.length})</summary>
+      <pre>${escapeHtml(JSON.stringify(data.tool_calls, null, 2))}</pre>`;
+    bubble.appendChild(det);
+  }
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+function hintFor(detail) {
+  const d = (detail || "").toLowerCase();
+  if (d.includes("api key") || d.includes("invalid_api_key") || d.includes("unauthorized") || d.includes("401")) {
+    return "That reads like a key problem — check the key in .env is current and matches the provider, then restart the server.";
+  }
+  if (d.includes("not_found") || d.includes("does not exist") || d.includes("decommission") || d.includes("404")) {
+    return "That model ID may have been retired by the provider. Check the current model list and update agents/config.py.";
+  }
+  if (d.includes("rate") || d.includes("429") || d.includes("quota")) {
+    return "Rate limit or quota — wait a moment and try again, or switch agents.";
+  }
+  if (d.includes("403") || d.includes("forbidden")) {
+    return "403 usually means the key was rejected or the network path is blocked. Run Diagnostics for a per-provider breakdown.";
+  }
+  if (d.includes("connect") || d.includes("timeout") || d.includes("network")) {
+    return "Looks like a network issue reaching the provider.";
+  }
+  return "Run Diagnostics above for a per-provider breakdown, or check the uvicorn terminal for the full traceback.";
+}
+
+function addError(status, detail) {
+  clearEmptyState();
+  removeTyping();
+  const row = document.createElement("div");
+  row.className = "row assistant";
+  const card = document.createElement("div");
+  card.className = "error-card";
+  card.innerHTML = `<div class="head">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/></svg>
+      Request failed (${status})
+    </div>
+    <pre>${escapeHtml(detail || "No detail returned by the server.")}</pre>
+    <div class="hint">${escapeHtml(hintFor(detail))}</div>`;
+  row.appendChild(card);
+  messagesEl.appendChild(row);
+  scrollDown();
 }
 
 async function send() {
   const message = inputEl.value.trim();
-  if (!message) return;
+  if (!message || busy) return;
+  busy = true;
+  sendBtn.disabled = true;
   addMessage("user", message);
   inputEl.value = "";
+  inputEl.style.height = "auto";
+  addTyping();
 
-  const res = await fetch("/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, agent: agentEl.value, message }),
-  });
-  if (!res.ok) {
-    addMessage("assistant", "Error: " + res.status);
-    return;
+  try {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, agent, message }),
+    });
+
+    if (!res.ok) {
+      let detail = "";
+      try {
+        const body = await res.json();
+        detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      } catch (_) {
+        detail = await res.text();
+      }
+      addError(res.status, detail);
+      return;
+    }
+
+    const data = await res.json();
+    data.agent = agent;
+    removeTyping();
+    const bubble = addMessage("assistant", data.response || "(empty response)");
+    addMeta(bubble, data);
+  } catch (e) {
+    addError("network", String(e) + "\n\nThe server may have stopped. Check the terminal running uvicorn.");
+  } finally {
+    busy = false;
+    sendBtn.disabled = false;
+    inputEl.focus();
   }
-  const data = await res.json();
-  const toolNote = data.tool_calls.length
-    ? `tools used: ${data.tool_calls.map(t => t.name).join(", ")} · ${data.latency_ms.toFixed(0)}ms`
-    : `${data.latency_ms.toFixed(0)}ms`;
-  addMessage("assistant", data.response, toolNote);
 }
 
-document.getElementById("send").addEventListener("click", send);
-inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+/* ---------- diagnostics ---------- */
+function diagRow(label, value, status, detail) {
+  return `<div class="diag-row">
+    <span class="dot ${status}"></span>
+    <div class="body">
+      <div class="label">${escapeHtml(label)}</div>
+      <div class="value">${escapeHtml(value)}</div>
+      ${detail ? `<div class="detail">${escapeHtml(detail)}</div>` : ""}
+    </div>
+  </div>`;
+}
+
+async function runDiagnostics() {
+  diagEl.classList.add("open");
+  diagCard.innerHTML = `<h3>Running checks&hellip;</h3><p class="note">Pinging each provider, the knowledge base, the embedder and web search.</p>`;
+  try {
+    const res = await fetch("/diagnostics");
+    const d = await res.json();
+    let html = `<h3>System diagnostics</h3><p class="note">Live check of every external dependency this app needs.</p>`;
+    d.agents.forEach(a => {
+      const value = a.status === "ok"
+        ? `${a.model} · key ${a.key_prefix} (${a.key_length} chars) · replied "${a.sample}"`
+        : `${a.model} · ${a.key_prefix ? `key ${a.key_prefix} (${a.key_length} chars)` : a.key_env + " not set"}`;
+      html += diagRow(`${a.agent} agent`, value, a.status, a.status === "ok" ? "" : a.detail);
+    });
+    html += diagRow("Knowledge base",
+      d.kb.status === "ok" ? `${d.kb.chunks} chunks loaded into Chroma` : "failed",
+      d.kb.status, d.kb.status === "ok" ? "" : d.kb.detail);
+    html += diagRow("Embedder",
+      d.embedder.status === "ok" ? `sentence-transformers, ${d.embedder.dimensions}-dim vectors` : "failed",
+      d.embedder.status, d.embedder.status === "ok" ? "" : d.embedder.detail);
+    html += diagRow("Web search",
+      d.web_search.status === "ok" ? `DuckDuckGo returned ${d.web_search.results} results` : "failed",
+      d.web_search.status, d.web_search.status === "ok" ? "" : d.web_search.detail);
+    diagCard.innerHTML = html;
+  } catch (e) {
+    diagCard.innerHTML = `<h3>Diagnostics failed</h3><p class="note">${escapeHtml(String(e))}</p>`;
+  }
+}
+
+/* ---------- wiring ---------- */
+document.querySelectorAll(".switcher button").forEach(btn => {
+  btn.onclick = () => {
+    agent = btn.dataset.agent;
+    document.querySelectorAll(".switcher button")
+      .forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+    inputEl.focus();
+  };
+});
+
+document.getElementById("diag-btn").onclick = () => {
+  if (diagEl.classList.contains("open")) { diagEl.classList.remove("open"); }
+  else { runDiagnostics(); }
+};
+
+document.getElementById("new-btn").onclick = async () => {
+  try { await fetch("/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId }),
+  }); } catch (_) {}
+  sessionId = newSessionId();
+  document.getElementById("sid").textContent = sessionId;
+  renderEmptyState();
+  inputEl.focus();
+};
+
+document.getElementById("theme-btn").onclick = () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const isDark = cur === "dark" || (cur !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme", isDark ? "light" : "dark");
+};
+
+sendBtn.onclick = send;
+inputEl.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+inputEl.addEventListener("input", () => {
+  inputEl.style.height = "auto";
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 132) + "px";
+});
+
+document.getElementById("sid").textContent = sessionId;
+renderEmptyState();
+inputEl.focus();
 </script>
 </body>
 </html>
