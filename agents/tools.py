@@ -20,12 +20,30 @@ def lookup_kb(coll, embed_fn: Callable[[list[str]], list[list[float]]], query: s
     return out
 
 
+def _ddgs_class():
+    """`duckduckgo-search` was frozen and renamed to `ddgs`; the old package
+    still imports but silently returns 0 results. Prefer the maintained
+    package and fall back to the legacy one so this works on either install.
+    """
+    try:
+        from ddgs import DDGS  # maintained successor
+        return DDGS
+    except ImportError:
+        from duckduckgo_search import DDGS  # legacy, frozen
+        return DDGS
+
+
 def search_web(query: str, max_results: int = 4) -> list[dict]:
-    from duckduckgo_search import DDGS
+    DDGS = _ddgs_class()
     with DDGS() as ddgs:
         results = list(ddgs.text(query, max_results=max_results))
     return [
-        {"title": r.get("title"), "snippet": r.get("body"), "url": r.get("href")}
+        {
+            # `ddgs` renamed these keys; accept both spellings.
+            "title": r.get("title"),
+            "snippet": r.get("body") or r.get("description"),
+            "url": r.get("href") or r.get("url") or r.get("link"),
+        }
         for r in results
     ]
 

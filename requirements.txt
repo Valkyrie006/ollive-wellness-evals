@@ -1,17 +1,8 @@
-# Pinned to versions confirmed to install and import cleanly together on
-# Linux aarch64 with no CUDA libs present (plain torch, no GPU needed).
-# Newer sentence-transformers/transformers require torch>=2.5, whose default
-# PyPI Linux aarch64 wheel hard-requires CUDA shared libraries even for CPU
-# use - avoid that combination.
 litellm
 requests
-torch==2.3.1
-transformers==4.44.2
-tokenizers>=0.19,<0.20
-huggingface-hub>=0.23.0,<0.24
-sentence-transformers==3.0.1
+sentence-transformers
 chromadb
-duckduckgo-search
+ddgs
 fastapi
 uvicorn
 deepeval

@@ -341,6 +341,21 @@
     border: 1px solid var(--danger-border); border-radius: 8px;
     padding: 7px 9px; white-space: pre-wrap; word-break: break-word;
   }
+  .models { margin-top: 9px; }
+  .models-head { font-size: 11.5px; color: var(--text-dim); margin-bottom: 7px; line-height: 1.5; }
+  .models-head code {
+    font-family: var(--mono); font-size: 11px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 5px; padding: 1px 5px;
+  }
+  .model-list { display: flex; flex-wrap: wrap; gap: 5px; max-height: 148px; overflow-y: auto; }
+  .model-pill {
+    font-family: var(--mono); font-size: 10.5px;
+    border: 1px solid var(--border); background: var(--surface-2);
+    color: var(--text); border-radius: 7px; padding: 4px 8px; cursor: pointer;
+    transition: border-color .14s, background .14s;
+  }
+  .model-pill:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
   footer { text-align: center; font-size: 11.5px; color: var(--text-dim); }
 </style>
 </head>
@@ -601,13 +616,14 @@ async function send() {
 }
 
 /* ---------- diagnostics ---------- */
-function diagRow(label, value, status, detail) {
+function diagRow(label, value, status, detail, extra) {
   return `<div class="diag-row">
     <span class="dot ${status}"></span>
     <div class="body">
       <div class="label">${escapeHtml(label)}</div>
       <div class="value">${escapeHtml(value)}</div>
       ${detail ? `<div class="detail">${escapeHtml(detail)}</div>` : ""}
+      ${extra || ""}
     </div>
   </div>`;
 }
@@ -623,7 +639,20 @@ async function runDiagnostics() {
       const value = a.status === "ok"
         ? `${a.model} · key ${a.key_prefix} (${a.key_length} chars) · replied "${a.sample}"`
         : `${a.model} · ${a.key_prefix ? `key ${a.key_prefix} (${a.key_length} chars)` : a.key_env + " not set"}`;
-      html += diagRow(`${a.agent} agent`, value, a.status, a.status === "ok" ? "" : a.detail);
+      let extra = "";
+      if (a.available_models && a.available_models.length) {
+        const envVar = a.agent === "oss" ? "OSS_MODEL" : "FRONTIER_MODEL";
+        const prefix = a.model.split("/")[0] + "/";
+        extra = `<div class="models">
+            <div class="models-head">This key <em>works</em> — the model ID is retired.
+            Pick one below, put it in <code>.env</code> as
+            <code>${envVar}=${escapeHtml(prefix)}&lt;id&gt;</code>, and restart.</div>
+            <div class="model-list">` +
+          a.available_models.map(m =>
+            `<button class="model-pill" data-copy="${escapeHtml(envVar + "=" + prefix + m)}">${escapeHtml(m)}</button>`
+          ).join("") + `</div></div>`;
+      }
+      html += diagRow(`${a.agent} agent`, value, a.status, a.status === "ok" ? "" : a.detail, extra);
     });
     html += diagRow("Knowledge base",
       d.kb.status === "ok" ? `${d.kb.chunks} chunks loaded into Chroma` : "failed",
@@ -635,6 +664,14 @@ async function runDiagnostics() {
       d.web_search.status === "ok" ? `DuckDuckGo returned ${d.web_search.results} results` : "failed",
       d.web_search.status, d.web_search.status === "ok" ? "" : d.web_search.detail);
     diagCard.innerHTML = html;
+    diagCard.querySelectorAll(".model-pill").forEach(btn => {
+      btn.onclick = async () => {
+        const line = btn.dataset.copy;
+        try { await navigator.clipboard.writeText(line); btn.textContent = "copied ✓"; }
+        catch (_) { btn.textContent = line; }
+        setTimeout(() => { btn.textContent = line.split("/").slice(1).join("/"); }, 1400);
+      };
+    });
   } catch (e) {
     diagCard.innerHTML = `<h3>Diagnostics failed</h3><p class="note">${escapeHtml(String(e))}</p>`;
   }

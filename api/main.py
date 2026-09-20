@@ -111,6 +111,51 @@ def chat(req: ChatRequest):
     return ChatResponse(response=result["response"], tool_calls=result["tool_calls"], latency_ms=latency_ms)
 
 
+def _fetch_available_models(provider: str, key: str) -> list[str]:
+    """Ask the provider what it actually serves for this key. Providers retire
+    model IDs on their own schedule, so this is the authoritative answer to
+    'what should I put in config' - no guessing from docs that may be stale.
+    """
+    import requests
+    from agents.config import MODEL_LIST_ENDPOINTS
+
+    url = MODEL_LIST_ENDPOINTS.get(provider)
+    if not url:
+        return []
+    if provider == "groq":
+        r = requests.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=20)
+        r.raise_for_status()
+        return sorted(m["id"] for m in r.json().get("data", []))
+    if provider == "gemini":
+        r = requests.get(url, params={"key": key, "pageSize": 200}, timeout=20)
+        r.raise_for_status()
+        names = []
+        for m in r.json().get("models", []):
+            if "generateContent" in (m.get("supportedGenerationMethods") or ["generateContent"]):
+                names.append(m["name"].replace("models/", ""))
+        return sorted(names)
+    return []
+
+
+@app.get("/available-models")
+def available_models():
+    """Live model list per provider, for filling in OSS_MODEL / FRONTIER_MODEL
+    / JUDGE_MODEL in .env when a provider retires an ID.
+    """
+    out = {}
+    for provider in {cfg["provider"] for cfg in AGENTS.values()}:
+        cfg = next(c for c in AGENTS.values() if c["provider"] == provider)
+        key = api_key_for(cfg)
+        if not key:
+            out[provider] = {"status": "missing_key", "models": []}
+            continue
+        try:
+            out[provider] = {"status": "ok", "models": _fetch_available_models(provider, key)}
+        except Exception as e:
+            out[provider] = {"status": "error", "detail": f"{type(e).__name__}: {str(e)[:300]}", "models": []}
+    return out
+
+
 @app.get("/diagnostics")
 def diagnostics():
     """One-shot self-check of every external dependency, so a failing /chat
@@ -145,6 +190,14 @@ def diagnostics():
         except Exception as e:
             logger.exception("diagnostics: agent %s failed", name)
             entry.update(status="error", error_type=type(e).__name__, detail=str(e)[:600])
+            # A retired model ID is the single most likely failure here, and
+            # it's only actionable if you know what IS available - so fetch
+            # the live list and attach it rather than making the user guess.
+            if "not_found" in str(e).lower() or "no longer available" in str(e).lower():
+                try:
+                    entry["available_models"] = _fetch_available_models(cfg["provider"], key)
+                except Exception as le:
+                    entry["available_models_error"] = f"{type(le).__name__}: {str(le)[:200]}"
         report["agents"].append(entry)
 
     try:
