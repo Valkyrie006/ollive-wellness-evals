@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Wellness Assistant POC</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
+  #agent-toggle { margin-bottom: 12px; }
+  #messages { border: 1px solid #ddd; border-radius: 8px; padding: 12px; height: 420px; overflow-y: auto; margin-bottom: 12px; }
+  .msg { margin: 8px 0; padding: 8px 12px; border-radius: 8px; max-width: 80%; }
+  .user { background: #DCF0FF; margin-left: auto; text-align: right; }
+  .assistant { background: #F0F0F0; }
+  .tool-note { font-size: 11px; color: #888; margin-top: 4px; }
+  #input-row { display: flex; gap: 8px; }
+  #input-row input { flex: 1; padding: 8px; }
+</style>
+</head>
+<body>
+  <h2>Wellness Assistant POC</h2>
+  <div id="agent-toggle">
+    Agent:
+    <select id="agent">
+      <option value="oss">OSS (Llama-3.1 via Groq)</option>
+      <option value="frontier">Frontier (Gemini Flash)</option>
+    </select>
+  </div>
+  <div id="messages"></div>
+  <div id="input-row">
+    <input id="input" type="text" placeholder="Ask about diet, exercise, sleep, meditation..." />
+    <button id="send">Send</button>
+  </div>
+
+<script>
+const sessionId = "session-" + Math.random().toString(36).slice(2);
+const messagesEl = document.getElementById("messages");
+const inputEl = document.getElementById("input");
+const agentEl = document.getElementById("agent");
+
+function addMessage(role, text, note) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  if (note) {
+    const n = document.createElement("div");
+    n.className = "tool-note";
+    n.textContent = note;
+    div.appendChild(n);
+  }
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+async function send() {
+  const message = inputEl.value.trim();
+  if (!message) return;
+  addMessage("user", message);
+  inputEl.value = "";
+
+  const res = await fetch("/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, agent: agentEl.value, message }),
+  });
+  if (!res.ok) {
+    addMessage("assistant", "Error: " + res.status);
+    return;
+  }
+  const data = await res.json();
+  const toolNote = data.tool_calls.length
+    ? `tools used: ${data.tool_calls.map(t => t.name).join(", ")} · ${data.latency_ms.toFixed(0)}ms`
+    : `${data.latency_ms.toFixed(0)}ms`;
+  addMessage("assistant", data.response, toolNote);
+}
+
+document.getElementById("send").addEventListener("click", send);
+inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+</script>
+</body>
+</html>
