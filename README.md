@@ -23,6 +23,7 @@ the memory handling, and the retry logic are shared code, and
 | Knowledge base | `kb/` | 9 wellness guides, paragraph-chunked and embedded |
 | HTTP API + UI | `api/`, `ui/` | FastAPI backend, single-file chat interface |
 | Evals harness | `evals/` | Scores both agents on three axes, then meta-evaluates the judge |
+| Guardrails | `agents/guardrails.py` | Input/output safety layer, derived from the eval results |
 
 ## Quick start
 
@@ -56,10 +57,62 @@ reaching Hugging Face.
 
 ## Running the evaluation
 
+With the server running, either drive it from the CLI:
+
 ```bash
-python evals/datasets/prepare.py                                  # sample the HF datasets
+python evals/datasets/prepare.py      # pulls MedHallu / BBQ / JailbreakBench
 python -m evals.runner --base-url http://localhost:8000 --agents oss frontier
-python evals/report.py                                            # writes results/chart.png
+python -m evals.meta_check            # scores the judge against known labels
+python evals/report.py                # charts
+python evals/report_doc.py            # one-page HTML + PDF report
+```
+
+…or trigger the whole pipeline over HTTP and poll it (this is how the
+committed results were produced):
+
+```bash
+curl -X POST localhost:8000/evals/run -H 'Content-Type: application/json' \
+  -d '{"agents":["oss","frontier"],"guardrails":false,"label":"baseline"}'
+curl localhost:8000/evals/status
+```
+
+A full run takes ~20 minutes and several hundred upstream calls — free
+tiers rate-limit hard, so the runner paces itself per agent.
+
+**Outputs** land in `results/` and are committed, so the numbers in the
+report can be checked against the per-item evidence:
+
+| File | What's in it |
+|---|---|
+| `evaluation_report.pdf` | The one-page report |
+| `scorecard.json` | Aggregated rates, latency percentiles, provenance |
+| `raw.jsonl` | Every item: prompt, response, verdict, the judge's reason, latency |
+| `judge_quality.json` | Judge scored against dataset ground truth, per case |
+| `comparison.png`, `judge_quality.png` | The infographics |
+
+### How the judge is judged
+
+The spec asks for an assessment of the judge itself. Rather than
+hand-labelling — which, at this scale, would mean an LLM labelling for an
+LLM judge — the judge is scored against ground truth the dataset already
+carries. MedHallu ships a known-correct *and* a known-hallucinated answer
+per question, so the judge's verdicts can be scored for accuracy,
+precision, recall, and **Cohen's κ**, which corrects for the agreement a
+coin flip would achieve. The deterministic refusal classifier and the LLM
+judge also label the same safety responses independently, and their
+disagreement rate is reported.
+
+### Guardrails
+
+`agents/guardrails.py` adds a deterministic input filter (prompt-injection
+*shape*, not topic) and an output layer that redacts specific dosage
+instructions and appends a medical disclaimer. They are toggleable at
+runtime so the **same running server** can be scored with and without —
+otherwise "the guardrails help" is an assertion rather than a measurement:
+
+```bash
+curl -X POST localhost:8000/evals/run -H 'Content-Type: application/json' \
+  -d '{"axes":["safety"],"guardrails":true,"out_name":"scorecard_guardrails.json"}'
 ```
 
 ## Configuration
@@ -91,6 +144,8 @@ Everything is environment-driven and read once in `settings.py`.
 | `GET /config` | What the UI needs to render itself |
 | `GET /diagnostics` | Per-dependency self-check *(debug only)* |
 | `GET /available-models` | Live model list from each provider *(debug only)* |
+| `POST /evals/run` | Starts a background evaluation *(debug only)* |
+| `GET /evals/status` | Progress and results of the current run *(debug only)* |
 
 `/diagnostics` is the one to reach for when something breaks: it pings both
 providers, the KB, the embedder, and web search, and reports what each one
@@ -101,7 +156,7 @@ failure.
 ## Tests
 
 ```bash
-python -m pytest tests/ -q      # 36 tests, no network, no API keys
+python -m pytest tests/ -q      # no network, no API keys
 ```
 
 Every network dependency is faked, so the suite runs anywhere and CI needs

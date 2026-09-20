@@ -2,13 +2,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
-results/*.json
-results/*.png
-results/raw.jsonl
 evals/gold_labels.jsonl
 evals/gold_labels_template.jsonl
 evals/datasets/*.jsonl
+!evals/datasets/fallback/*.jsonl
 .venv/
 venv/
-_to_delete/
-.ruff_cache/

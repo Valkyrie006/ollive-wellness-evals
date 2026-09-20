@@ -85,6 +85,11 @@ class Settings:
     enable_debug_endpoints: bool = True
     cors_origins: tuple[str, ...] = field(default_factory=tuple)
 
+    # --- guardrails ---------------------------------------------------
+    # Toggleable so the eval can measure the same agents with and without
+    # them. A guardrail whose effect you cannot measure is a guess.
+    enable_guardrails: bool = True
+
     @property
     def is_production(self) -> bool:
         return self.env.lower() in {"production", "prod"}
@@ -111,6 +116,7 @@ class Settings:
             # want them on a deployed instance.
             enable_debug_endpoints=_bool("ENABLE_DEBUG_ENDPOINTS", not is_prod),
             cors_origins=_csv("CORS_ORIGINS", ()),
+            enable_guardrails=_bool("ENABLE_GUARDRAILS", True),
         )
 
 

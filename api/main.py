@@ -14,6 +14,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -91,7 +92,7 @@ async def request_context(request: Request, call_next):
     request.state.request_id = request_id
     started = time.perf_counter()
 
-    if request.url.path in RATE_LIMITED_PATHS:
+    if request.url.path in RATE_LIMITED_PATHS and not _is_loopback(request):
         allowed, retry_after = rate_limiter.check(_client_key(request))
         if not allowed:
             logger.warning("rate limited request_id=%s path=%s", request_id, request.url.path)
@@ -129,6 +130,25 @@ async def request_context(request: Request, call_next):
                     request_id, request.method, request.url.path,
                     response.status_code, elapsed_ms)
     return response
+
+
+LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_loopback(request: Request) -> bool:
+    """Exempt loopback from rate limiting.
+
+    The eval runner drives ~70 /chat calls through this server, which the
+    public limit would block. Anything originating on the loopback
+    interface is the operator, not a caller from the internet - and if
+    someone can bind your loopback, a rate limit is not what's protecting
+    you. A forwarded header disqualifies the request, so a proxied caller
+    can't claim to be local.
+    """
+    if request.headers.get("x-forwarded-for"):
+        return False
+    host = request.client.host if request.client else ""
+    return host in LOOPBACK
 
 
 def _client_key(request: Request) -> str:
@@ -173,6 +193,22 @@ class ChatResponse(BaseModel):
 
 class ResetRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=settings.max_session_id_chars)
+
+
+class EvalRunRequest(BaseModel):
+    base_url: str = Field(default="http://127.0.0.1:8000", max_length=200)
+    agents: list = Field(default_factory=lambda: ["oss", "frontier"])
+    include_judge_meta: bool = True
+    prepare_datasets: bool = True
+    # Optional[...] rather than `X | None`: pydantic resolves annotations
+    # eagerly at class creation, so PEP 604 unions raise TypeError on
+    # Python 3.9 even with `from __future__ import annotations` in force.
+    # This crashed the running server once already.
+    axes: Optional[list] = None
+    guardrails: Optional[bool] = None
+    out_name: str = Field(default="scorecard.json", max_length=64)
+    raw_name: str = Field(default="raw.jsonl", max_length=64)
+    label: Optional[str] = Field(default=None, max_length=80)
 
 
 # --------------------------------------------------------------------------
@@ -252,6 +288,18 @@ def chat(req: ChatRequest, request: Request):
     if not hasattr(app.state, "kb_collection"):
         raise HTTPException(status_code=503, detail="Knowledge base not loaded yet")
 
+    # Input guard runs BEFORE the model call: a blocked prompt then costs
+    # nothing and cannot be argued around by the model itself.
+    from agents import guardrails
+    if guardrails.is_enabled():
+        from agents.guardrails import check_input
+        gate = check_input(req.message)
+        if not gate["allowed"]:
+            logger.info("request_id=%s guardrail blocked input (%s)", request_id, gate["reason"])
+            return ChatResponse(response=gate["response"],
+                                tool_calls=[{"name": "guardrail", "result": gate["reason"]}],
+                                latency_ms=0.0)
+
     model_config = AGENTS[req.agent]
     api_key = api_key_for(model_config)
     if not api_key:
@@ -287,12 +335,23 @@ def chat(req: ChatRequest, request: Request):
         raise HTTPException(status_code=502, detail=detail) from e
 
     latency_ms = (time.perf_counter() - start) * 1000
+
+    response_text = result["response"]
+    tool_calls = list(result["tool_calls"])
+    if guardrails.is_enabled():
+        from agents.guardrails import apply_output_guards
+        guarded = apply_output_guards(req.message, response_text)
+        if guarded["applied"]:
+            logger.info("request_id=%s guardrails applied: %s", request_id, guarded["applied"])
+            tool_calls.append({"name": "guardrail", "result": guarded["applied"]})
+        response_text = guarded["response"]
+
     logger.info("request_id=%s agent=%s tools=%s latency_ms=%.0f",
                 request_id, req.agent,
                 [t["name"] for t in result["tool_calls"]], latency_ms)
     return ChatResponse(
-        response=result["response"],
-        tool_calls=result["tool_calls"],
+        response=response_text,
+        tool_calls=tool_calls,
         latency_ms=latency_ms,
     )
 
@@ -419,6 +478,22 @@ def diagnostics():
         report["web_search"] = {"status": "error", "detail": f"{type(e).__name__}: {str(e)[:400]}"}
 
     return report
+
+
+@app.post("/evals/run")
+def evals_run(req: EvalRunRequest):
+    """Kicks off a full evaluation in the background. Debug-gated: it spends
+    hundreds of upstream calls per run."""
+    _require_debug_endpoints()
+    from api.evals_routes import RunRequest, start_run
+    return start_run(RunRequest(**req.model_dump()))
+
+
+@app.get("/evals/status")
+def evals_status():
+    _require_debug_endpoints()
+    from api.evals_routes import get_status
+    return get_status()
 
 
 @app.get("/config")

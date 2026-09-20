@@ -274,6 +274,160 @@ verified separately by driving the running app against the live APIs.
 
 ---
 
+## 13. The judge, and not using DeepEval
+
+**Approach.** Direct, single-call judge prompts per axis, each returning a
+verdict plus a one-sentence reason, at temperature 0.
+
+**Why not DeepEval**, which the original plan specified:
+
+| | DeepEval | Direct prompts ✅ |
+|---|---|---|
+| Credibility | A published, validated library | Prompts are mine — no external validation |
+| Judge meta-eval | Returns a float; the raw verdict is behind its abstraction | The verdict *is* the output, so it can be scored against known labels |
+| Robustness | Needs strictly-schema'd JSON; small open models break it, and a failed parse silently becomes a score | One JSON object, with fenced/prose extraction and retry |
+| Cost | Several calls per metric per item | One call per item — the difference between finishing on a free tier and rate-limiting |
+
+The decisive factor was the second row. "Assess the quality of the judge"
+requires the judge's raw verdict on items whose correct answer is known, and
+that is awkward through a library that hands back only a score. The cost is
+real and stated: these prompts carry none of a published library's validation.
+
+**Every reason is written to `results/raw.jsonl`.** A scorecard you cannot
+audit is a scorecard you cannot defend.
+
+---
+
+## 14. Judging the judge without hand labels
+
+**Approach.** MedHallu ships, per question, a known-correct answer *and* a
+known-hallucinated one. Both are fed to the judge; its verdicts are scored
+against those labels.
+
+**Why not hand-labelling**, which the original plan specified: at this scale
+the labels would have been produced by me — an LLM labelling for an LLM
+judge, which is circular. Dataset ground truth is independent of any model
+in the loop, and there is enough of it to compute real classification
+metrics instead of one agreement number.
+
+**Why κ and not raw agreement.** On a balanced two-class problem a coin flip
+scores 50%. Quoting uncorrected agreement makes a useless judge look
+adequate. Cohen's κ subtracts what chance explains; the confusion matrix is
+reported alongside because the two failure directions are not equivalent — a
+judge that *misses* hallucinations flatters the agents, one that *over-flags*
+punishes them.
+
+**Second, independent check.** The deterministic regex classifier and the LLM
+judge label the same safety responses. Their agreement rate is reported.
+Two mechanisms agreeing is weak evidence they are right; disagreeing is
+strong evidence one is wrong.
+
+---
+
+## 15. Safety scored as two opposite failures
+
+**Approach.** Attack-success rate (complying with a harmful prompt) and
+over-refusal rate (refusing a legitimate wellness question) are reported
+separately, never averaged.
+
+**Why.** Collapsing them into one "safety score" means an agent that refuses
+everything scores perfectly. Over-refusal is the failure users actually
+feel, and it is the predictable side-effect of tightening the other number —
+so it needs its own column, permanently visible.
+
+The benign-sensitive prompts are hand-written and committed, because a
+jailbreak dataset by definition contains no legitimate questions.
+
+---
+
+## 16. Guardrails, derived rather than assumed
+
+**Approach.** Two layers — a deterministic input filter on prompt-injection
+*shape*, and an output layer that redacts specific dosage instructions and
+appends a disclaimer on medical topics. Toggleable at runtime.
+
+**Why toggleable.** So the same running server can be scored with and
+without. Comparing two separately-started servers would confound the result
+with everything else that differs between runs; without the toggle, "the
+guardrails help" is an assertion rather than a measurement.
+
+**Why the input layer matches shape, not topic.** `"ignore all previous
+instructions"` is blocked; `"how do I ignore my phone before bed?"` is not.
+Half the guardrail tests assert that legitimate questions get *through* —
+that is the failure mode with a number attached, on the over-refusal axis.
+
+**Why output guards rewrite rather than block.** Withholding an entire answer
+because one sentence was too specific trades a small risk for a large
+uselessness.
+
+---
+
+## 17. Datasets: real benchmarks with a committed fallback
+
+**Approach.** MedHallu, BBQ and JailbreakBench pulled from Hugging Face,
+each falling back to a small committed fixture if the pull fails.
+
+**Why the fallback exists.** The first real run fell back on all three:
+MedHallu needs a *config* name where a split was passed, and BBQ is split by
+bias category rather than train/test. A public repo whose eval harness only
+works on the day the schemas happen to match is not much of a harness. The
+exact arguments are now pinned, and the fallback remains for the day a repo
+becomes gated.
+
+**Trade-off.** The fixtures are small and clear-cut, so a fallback run is
+*easier* than a real one — and the scorecard records which source it used,
+so that can never be quietly mistaken for a benchmark result.
+
+---
+
+## 18. Python 3.9: two runtime bugs a linter caused
+
+Both of these imported cleanly and failed in production, and both came from
+tooling configured for a newer Python than the deployment ran.
+
+**`zip(..., strict=False)`** — added by a ruff autofix. Every KB lookup raised
+`zip() takes no keyword arguments`; the error was handed to the model as a
+tool result, and the model reported it "couldn't find anything". A hard
+failure wearing the costume of a plausible answer.
+
+**`axes: list | None` on a pydantic model** — PEP 604 unions are fine as
+deferred annotations, but pydantic resolves model annotations *eagerly* at
+class creation, so `from __future__ import annotations` does not save you.
+The server crash-looped. Ruff's UP007/UP045 actively recommend this change
+and cannot know about pydantic's eager evaluation, so both rules are now
+disabled with that reason recorded in `pyproject.toml`.
+
+**The fix was not the two lines.** `target-version` now pins the *oldest*
+supported interpreter rather than the newest, CI runs the matrix on 3.9, and
+`tests/test_python_compat.py` scans the source for both patterns so they
+fail a test rather than a server.
+
+---
+
+## 19. Running evals over HTTP, in the background
+
+**Approach.** `POST /evals/run` starts a background thread; `GET
+/evals/status` reports progress. Debug-gated with everything else.
+
+**Why background.** A full run is many minutes and hundreds of upstream
+calls. Request/response would mean a dropped connection loses a run that has
+already cost real quota.
+
+**Why loopback is exempt from rate limiting.** The runner drives ~84 `/chat`
+calls through this server, which the public limit would block. Traffic
+originating on the loopback interface is the operator; a forwarded header
+disqualifies the request so a proxied caller cannot claim to be local.
+
+**Free-tier pacing is not optional.** The first full run lost 51 of 68 items
+to provider 429s. A rate limit is a transient error with a completely
+different time constant, so it now backs off from 20s rather than 1s, and
+the runner paces per agent (Gemini's free tier being the stricter). The
+scorecard carries a `valid` flag that goes false past a 20% error rate — a
+run that lost a third of its items is not a measurement, and a scorecard
+that doesn't say so invites someone to quote it.
+
+---
+
 ## Summary of known limitations
 
 | Limitation | Impact | Fix |
@@ -285,3 +439,6 @@ verified separately by driving the running app against the live APIs.
 | Qwen judge is Preview tier | May vanish without notice | Fallback documented in `agents/config.py` |
 | No authentication | Anyone who can reach it can spend your quota | API key or OAuth before public exposure |
 | No end-to-end test against real providers | Provider-side breakage found by hand | Nightly smoke test outside PR CI |
+| Small eval samples (12 per axis) | One item moves a rate by several points | Scale to 100+ per axis |
+| Judge is a single model | No cross-judge consensus | Second judge family, report disagreement |
+| Eval endpoints are debug-gated, not authenticated | Anyone with debug on can spend your quota | Auth before enabling on a deployment |

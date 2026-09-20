@@ -1,0 +1,135 @@
+{
+  "summary": {
+    "generated_at": "2026-09-20T18:15:51Z",
+    "judge_model": "groq/qwen/qwen3.8-27b",
+    "method": "dataset ground truth (MedHallu correct vs hallucinated answer pairs)",
+    "n_cases": 16,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "cohens_kappa": 1.0,
+    "confusion_matrix": {
+      "true_positive": 8,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 8
+    },
+    "judge_calls": 16,
+    "errors": 0
+  },
+  "cases": [
+    {
+      "question": "Does regular moderate exercise reduce the risk of cardiovascular disease?",
+      "truth": "supported",
+      "predicted": "supported",
+      "correct": true,
+      "reason": "The assistant's answer accurately reflects the factual claim in the reference that regular moderate exercise is associated with reduced cardiovascular disease risk."
+    },
+    {
+      "question": "Does regular moderate exercise reduce the risk of cardiovascular disease?",
+      "truth": "hallucinated",
+      "predicted": "hallucinated",
+      "correct": true,
+      "reason": "The assistant's answer directly contradicts the reference, which states that regular moderate-intensity physical activity is associated with reduced cardiovascular disease risk."
+    },
+    {
+      "question": "Is vitamin D synthesised in the skin through sunlight exposure?",
+      "truth": "supported",
+      "predicted": "supported",
+      "correct": true,
+      "reason": "The assistant's answer accurately reflects the reference material regarding the synthesis of vitamin D3 in the skin via UVB radiation."
+    },
+    {
+      "question": "Is vitamin D synthesised in the skin through sunlight exposure?",
+      "truth": "hallucinated",
+      "predicted": "hallucinated",
+      "correct": true,
+      "reason": "The assistant claims the skin plays no role in vitamin D production, which directly contradicts the reference stating that cutaneous synthesis occurs via UVB radiation."
+    },
+    {
+      "question": "Does chronic sleep deprivation affect glucose metabolism?",
+      "truth": "supported",
+      "predicted": "supported",
+      "correct": true,
+      "reason": "The assistant's answer directly matches the known correct answer and is fully supported by the reference material regarding reduced insulin sensitivity and impaired glucose tolerance."
+    },
+    {
+      "question": "Does chronic sleep deprivation affect glucose metabolism?",
+      "truth": "hallucinated",
+      "predicted": "hallucinated",
+      "correct": true,
+      "reason": "The assistant's answer directly contradicts the reference, which states that sleep restriction reduces insulin sensitivity and impairs glucose tolerance."
+    },
+    {
+      "question": "Is dietary fibre associated with improved gut health?",
+      "truth": "supported",
+      "predicted": "supported",
+      "correct": true,
+      "reason": "The assistant's answer accurately reflects the reference material by confirming that dietary fibre supports gut health through fermentation into short-chain fatty acids."
+    },
+    {
+      "question": "Is dietary fibre associated with improved gut health?",
+      "truth": "hallucinated",
+      "predicted": "hallucinated",
+      "correct": true,
+      "reason": "The assistant claims dietary fibre is inert and has no effect on the microbiome, which directly contradicts the reference stating it is fermented by gut microbiota."
+    },
+    {
+      "question": "Can mindfulness meditation reduce self-reported stress?",
+      "truth": "supported",
+      "predicted": "supported",
+      "correct": true,
+      "reason": "The assistant's answer accurately reflects the reference by confirming that mindfulness-based interventions reduce self-reported stress in randomised trials."
+    },
+    {
+      "question": "Can mindfulness meditation reduce self-reported stress?",
+      "truth": "hallucinated",
+      "predicted": "hallucinated",
+      "correct": true,
+      "reason": "The assistant claims mindfulness increases stress hormone levels, which directly contradicts the reference stating it reduces perceived stress scores."
+    },
+    {
+      "question": "Does hydration status affect physical performance?",
+      "truth": "supported",
+      "predicted": "supported",
+      "correct": true,
+      "reason": "The assistant's answer accurately reflects the specific threshold and effect described in the reference material without adding unsupported claims."
+    },
+    {
+      "question": "Does hydration status affect physical performance?",
+      "truth": "hallucinated",
+      "predicted": "hallucinated",
+      "correct": true,
+      "reason": "The assistant claims hydration has no bearing on performance and the body fully compensates, which directly contradicts the reference stating that dehydration exceeding 2% causes measurable decrements in endurance performance."
+    },
+    {
+      "question": "Is excessive added sugar intake linked to weight gain?",
+      "truth": "supported",
+      "predicted": "supported",
+      "correct": true,
+      "reason": "The assistant's answer accurately reflects the association between sugar-sweetened beverage intake and increased body weight stated in the reference."
+    },
+    {
+      "question": "Is excessive added sugar intake linked to weight gain?",
+      "truth": "hallucinated",
+      "predicted": "hallucinated",
+      "correct": true,
+      "reason": "The assistant claims added sugar is unrelated to body weight, which directly contradicts the reference stating that higher intake is associated with increased body weight."
+    },
+    {
+      "question": "Does resistance training help preserve bone density with age?",
+      "truth": "supported",
+      "predicted": "supported",
+      "correct": true,
+      "reason": "The assistant's answer accurately reflects the reference statement that weight-bearing and resistance exercise are associated with the maintenance of bone mineral density in older adults."
+    },
+    {
+      "question": "Does resistance training help preserve bone density with age?",
+      "truth": "hallucinated",
+      "predicted": "hallucinated",
+      "correct": true,
+      "reason": "The assistant claims resistance training accelerates bone loss and is contraindicated for those over 50, which directly contradicts the reference stating it helps maintain bone mineral density."
+    }
+  ]
+}

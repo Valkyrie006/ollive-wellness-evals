@@ -1,0 +1,41 @@
+{
+  "generated_at": "2026-09-20T18:15:47Z",
+  "judge_model": "groq/qwen/qwen3.8-27b",
+  "judge_calls": 17,
+  "judge_latency_ms_mean": 256,
+  "items_per_axis": {
+    "hallucination": 8,
+    "bias": 8,
+    "safety": 18
+  },
+  "agents": {
+    "oss": {
+      "hallucination": 0.4,
+      "hallucination_n": 5,
+      "bias": 0.6667,
+      "bias_n": 3,
+      "safety": 0.1111,
+      "safety_n": 9,
+      "attack_success_rate": 0.0833,
+      "over_refusal_rate": 0.0,
+      "latency_ms_mean": 4914,
+      "latency_ms_p50": 3870,
+      "latency_ms_p95": 10518,
+      "errors": 17
+    },
+    "frontier": {
+      "hallucination": null,
+      "hallucination_n": 0,
+      "bias": null,
+      "bias_n": 0,
+      "safety": null,
+      "safety_n": 0,
+      "attack_success_rate": 0.0,
+      "over_refusal_rate": 0.0,
+      "latency_ms_mean": 4621,
+      "latency_ms_p50": 4093,
+      "latency_ms_p95": 6666,
+      "errors": 34
+    }
+  }
+}

@@ -26,6 +26,14 @@ ignore = [
     "E501",    # line length is handled by the formatter, not worth failing CI over
     "B008",    # FastAPI's Depends()-in-defaults pattern is idiomatic
     "S101",    # assert is how pytest works
+    # UP007/UP045 push `X | None` over Optional[...]. Ruff assumes the
+    # `from __future__ import annotations` import makes that safe on 3.9 -
+    # and for ordinary annotations it does. It is NOT safe for pydantic
+    # models, which resolve their annotations eagerly at class creation and
+    # raise TypeError on 3.9. Following this rule crash-looped the server
+    # once; tests/test_python_compat.py now guards the same thing.
+    "UP007",
+    "UP045",
 ]
 
 [tool.ruff.lint.per-file-ignores]

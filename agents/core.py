@@ -36,13 +36,28 @@ TRANSIENT_MARKERS = (
 )
 
 
+RATE_LIMIT_MARKERS = ("429", "rate limit", "rate_limit", "quota", "resource_exhausted")
+
+# A rate limit is a transient error with a completely different time
+# constant. Backing off 1s then 2s against a per-minute quota just burns
+# the retries and reports failure - which is exactly what happened on the
+# first full eval run: 51 of 68 items died this way.
+RATE_LIMIT_BASE_DELAY_S = 20.0
+TRANSIENT_BASE_DELAY_S = 1.0
+
+
 def _is_transient(err: Exception) -> bool:
     msg = str(err).lower()
     return any(marker in msg for marker in TRANSIENT_MARKERS)
 
 
+def _is_rate_limit(err: Exception) -> bool:
+    msg = str(err).lower()
+    return any(marker in msg for marker in RATE_LIMIT_MARKERS)
+
+
 def _completion_with_retry(completion_fn, **kwargs):
-    delay = 1.0
+    delay = None
     for attempt in range(MAX_COMPLETION_RETRIES):
         try:
             return completion_fn(**kwargs)
@@ -50,6 +65,8 @@ def _completion_with_retry(completion_fn, **kwargs):
             last_attempt = attempt == MAX_COMPLETION_RETRIES - 1
             if last_attempt or not _is_transient(e):
                 raise
+            if delay is None:
+                delay = RATE_LIMIT_BASE_DELAY_S if _is_rate_limit(e) else TRANSIENT_BASE_DELAY_S
             logger.warning(
                 "transient upstream error (attempt %d/%d), retrying in %.1fs: %s",
                 attempt + 1, MAX_COMPLETION_RETRIES, delay, str(e)[:160],
