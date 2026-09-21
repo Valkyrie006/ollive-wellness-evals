@@ -1,5 +1,9 @@
 # Wellness Assistant + Evals Platform
 
+[![CI](https://github.com/Valkyrie006/wellness-assistant-evals/actions/workflows/ci.yml/badge.svg)](https://github.com/Valkyrie006/wellness-assistant-evals/actions/workflows/ci.yml)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 Two AI wellness assistants — one open-weights, one frontier — on a
 **byte-identical architecture**, plus a harness that scores both on
 hallucination, bias and content safety, then checks whether the judge doing

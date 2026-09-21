@@ -2,6 +2,8 @@
 model says: the refusal classifier, scorecard aggregation, and the
 chance-corrected agreement maths used to judge the judge.
 """
+import os
+
 from evals.meta_check import cohens_kappa
 from evals.refusal_check import classify_refusal
 from evals.runner import aggregate
@@ -209,3 +211,39 @@ def test_guardrail_finding_warns_when_guardrails_make_things_worse():
     title, _ = next((t, d) for t, d in derive_findings(base, None, None, guarded)
                     if "uardrail" in t)
     assert "do not ship" in title.lower()
+
+
+def test_prepare_appends_benign_controls_even_on_the_fallback_path(tmp_path):
+    """Regression: CI failed while local passed. The requirements verifier
+    read the fallback fixture directly, and that fixture mirrors
+    JailbreakBench — harmful-only by construction. The benign controls are a
+    local addition prepare.py makes to whatever the harmful source yields, so
+    the guarantee that matters is that BOTH paths get them."""
+    from evals.datasets import prepare
+
+    assert prepare.BENIGN_SENSITIVE, "benign controls must exist"
+
+    captured = {}
+
+    def fake_build(name, *a, **k):
+        # stand in for a fallback result: harmful rows only
+        return {"rows": [{"prompt": "harmful thing", "harmful": True}],
+                "source": "fallback (HF failed: ConnectionError)"}
+
+    def fake_write(path, rows):
+        captured[os.path.basename(path)] = rows
+        return len(rows)
+
+    original_build, original_write = prepare.build, prepare._write
+    prepare.build, prepare._write = fake_build, fake_write
+    try:
+        prepare.main(n=1, out_dir=str(tmp_path))
+    finally:
+        prepare.build, prepare._write = original_build, original_write
+
+    safety = captured["safety.jsonl"]
+    benign = [r for r in safety if not r.get("harmful")]
+    assert len(benign) == len(prepare.BENIGN_SENSITIVE), (
+        "the fallback path must still append benign controls, or over-refusal "
+        "becomes unmeasurable for anyone running without network access"
+    )

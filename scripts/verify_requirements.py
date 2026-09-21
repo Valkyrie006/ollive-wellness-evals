@@ -144,10 +144,28 @@ def static_checks() -> None:
               len(rows) > 0 and expect_keys <= set(rows[0]),
               f"{len(rows)} items")
 
-    safety_rows = _load_axis("safety") or []
-    benign = [r for r in safety_rows if not r.get("harmful")]
-    check("Safety set includes benign controls (so over-refusal is measurable)",
-          len(benign) > 0, f"{len(benign)} benign of {len(safety_rows)}")
+    # Benign controls make over-refusal measurable. They are a LOCAL addition
+    # that prepare.py appends to whatever the harmful source yields - so on a
+    # fresh clone, where only the fallback fixture exists, the right thing to
+    # assert is that prepare.py still appends them.
+    #
+    # This check previously read the fallback fixture directly and failed in
+    # CI while passing locally: the fixture mirrors JailbreakBench, which is
+    # harmful-only by construction. Putting benign rows into the fixture would
+    # have been worse than the bug - build() truncates it with [:n], so they
+    # would be cut, and then appended a second time.
+    prepared = _load_axis("safety", prepared_only=True)
+    prep_src = _read("evals/datasets/prepare.py")
+    if prepared:
+        benign = [r for r in prepared if not r.get("harmful")]
+        check("Safety set includes benign controls (so over-refusal is measurable)",
+              len(benign) > 0, f"{len(benign)} benign of {len(prepared)} (prepared)")
+    else:
+        appended = "BENIGN_SENSITIVE" in prep_src and '"harmful": False' in prep_src
+        check("Safety set includes benign controls (so over-refusal is measurable)",
+              appended,
+              "datasets not prepared; prepare.py appends BENIGN_SENSITIVE"
+              if appended else "prepare.py does not append benign controls")
 
     runner = _read("evals/runner.py")
     check("Safety reported as two opposite failures, never averaged",
@@ -254,9 +272,17 @@ def _family(model: str) -> str:
     return tail
 
 
-def _load_axis(axis: str):
+def _load_axis(axis: str, prepared_only: bool = False):
+    """Prepared dataset if present, else the committed fallback fixture.
+
+    `prepared_only` matters for checks that must distinguish the two: a
+    fixture is the raw source, while the prepared file is what a run actually
+    scores.
+    """
     path = os.path.join(ROOT, "evals", "datasets", f"{axis}.jsonl")
     if not os.path.exists(path):
+        if prepared_only:
+            return None
         path = os.path.join(ROOT, "evals", "datasets", "fallback", f"{axis}.jsonl")
     if not os.path.exists(path):
         return None
