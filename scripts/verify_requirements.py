@@ -180,6 +180,13 @@ def static_checks() -> None:
     check("Design document includes diagrams",
           design.count("```mermaid") >= 3, f"{design.count('```mermaid')} diagrams")
 
+    arch = _read("docs/ARCHITECTURE.md")
+    check("Architecture doc covers current design and north star",
+          "north star" in arch.lower() and "sequenceDiagram" in arch,
+          f"{arch.count('```mermaid')} diagrams, {len(arch)} chars")
+    check("Architecture doc carries a prioritised roadmap",
+          "Roadmap" in arch and "Effort" in arch)
+
     report_doc = _read("evals/report_doc.py")
     check("1-page report is generated from the data, not hand-written",
           "def derive_findings" in report_doc and "def derive_recommendations" in report_doc)

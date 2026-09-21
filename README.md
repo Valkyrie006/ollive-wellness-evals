@@ -13,7 +13,8 @@ the memory handling, and the retry logic are shared code, and
 
 📄 **[One-page evaluation report (PDF)](results/evaluation_report.pdf)** ·
 🎬 **[Demo walkthrough](docs/demo/)** ·
-🧭 **[Design decisions](docs/DESIGN.md)**
+🧭 **[Design decisions](docs/DESIGN.md)** ·
+🏗 **[Architecture & north star](docs/ARCHITECTURE.md)**
 
 ---
 
@@ -331,29 +332,57 @@ Each of these is a deliberate choice with a cost, not an oversight.
 | **Python 3.9 floor** | Runs on stock macOS system Python without a toolchain | No PEP 604 unions, no `zip(strict=)`. Enforced by `tests/test_python_compat.py` and CI, after both bit this project |
 | **Direct judge prompts** instead of DeepEval | Prompts are visible, versioned and diffable in `evals/judge.py` | Re-implements metric plumbing a framework provides |
 | **Replayed provider responses in the demo** | The demo is deterministic and works for anyone without keys | The latency chips read ~0.0s; real latencies come from `scorecard.json` |
+| **Eval harness runs inside the app it measures** | No second service to deploy; the harness provably hits the same `POST /chat` a user does | The guardrail toggle is process-global, so an eval run with guardrails off affects live traffic on that server. Wrong for anything shared — see [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **Results written once, at the end of a run** | Simple, atomic, no partial-state handling | A crash loses the whole run. This happened twice, at ~20 minutes of real quota each |
+| **Both agents on one provider** | Removes provider infrastructure as a confound — same serving stack, so a latency gap is the model, not the vendor | Narrows open-vs-frontier to one vendor's lineup. Forced by Groq's per-day token cap; `OSS_MODEL=groq/openai/gpt-oss-20b` reverts it |
+
+## What the evaluation taught us about the design
+
+The most useful output of the run was not the scores — it was four things
+about the *system* that could not have been asserted in advance. Full
+write-up in **[ARCHITECTURE.md](docs/ARCHITECTURE.md)**; in short:
+
+**Scaffolding determines safety; the model determines accuracy.** Both
+agents scored *identically* on attack success (17%) and over-refusal (0%),
+while differing sharply on hallucination and bias. Safety came from the
+parts held constant — prompt and guardrails. So don't try to fix safety by
+swapping models. This is only visible *because* the architecture is fixed.
+
+**Guardrails are not uniformly effective.** They took the frontier agent
+17% → 0% attack success and left the open-source agent unchanged. A
+guardrail interacts with the model behind it, so its effect is a
+per-deployment claim, not a general one.
+
+**Judge reliability is axis-dependent.** κ = 1.00 on hallucination, but only
+65% agreement with the rule-based classifier on safety. You cannot validate
+a judge once and call it validated.
+
+**A broken tool corrupts measurements silently.** Web search failing inside
+the tool loop turned ~10s items into ~3-minute ones, and the latency column
+was measuring a broken parser rather than the models. Hence errored items
+excluded from denominators, a `valid` flag, and a per-tool circuit breaker.
 
 ## What I'd improve with more time
 
-1. **Scale the eval sets by 20–50×** and report confidence intervals. The
-   current sets are sized for free-tier budgets; they support ranking
-   claims, not precise rates.
-2. **Multiple judges with an agreement gate** — run two judges from
-   different families and route only their disagreements to a human. That
-   turns judge error from a caveat into a measured, bounded quantity.
-3. **Move sessions to Redis and the vector store to a persistent Chroma /
-   pgvector**, which is the actual blocker to running more than one
-   replica.
-4. **Multi-turn eval cases.** Every axis is currently single-turn, but
-   jailbreaks and hallucination drift are both strongest across turns —
-   this is the biggest coverage gap in the platform.
-5. **Regression gating in CI**: fail the build when attack-success rises or
-   hallucination worsens beyond a threshold against a committed baseline.
-   The scorecard format already supports it.
-6. **Per-item human spot-checks on a stratified sample**, published beside
-   the κ, so the judge's quality claim rests on more than one dataset's
-   labels.
-7. **Cost telemetry from provider response headers** rather than published
-   price lists, so the cost table reflects actual token accounting.
+Ordered by value per unit of effort — the two cheapest items capture most of
+it. Full reasoning and a north-star architecture in
+**[ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+| # | Build | Effort | Why here |
+|---|---|---|---|
+| 1 | **Frozen baseline + CI gate** | Hours | Stops regressions immediately and needs no new infrastructure — diff each run against a pinned `baseline.json` |
+| 2 | **Failure attribution** | ~1 day | Record *why* an item failed: retrieval missed the chunk, model ignored it, tool errored, or the judge was wrong. Turns "50% hallucination" from a report card into a work queue |
+| 3 | **Ground truth for bias + safety** | Days | Only hallucination has labels today, so two of three axes are unvalidated. ~50 hand-labelled items per axis moves them from indicative to measured |
+| 4 | **Multi-turn eval cases** | Days | Every case is single-turn. Jailbreaks and hallucination drift are strongest *across* turns — the platform measures the easy case |
+| 5 | **Scale with stratification** | Days | n=6 means one item moves a rate 17 points. Tag items easy / medium / adversarial so "failed 50%" is interpretable |
+| 6 | **Second judge + disagreement routing** | ~1 week | Route only judge disagreements to a human — bounds judge error instead of caveating it |
+| 7 | **Separate harness, queue, results store** | ~1 week | Fixes the global guardrail flag, makes runs resumable and parallel, and lets you ask "did this get worse?" rather than only "what is it now?" |
+| 8 | **Online eval on sampled traffic** | ~1 week | Offline sets go stale; online catches drift |
+
+Smaller, worth doing: per-request guardrail config instead of a global flag;
+judge regression fixtures in CI; authentication on the eval endpoints; cost
+telemetry from provider response headers; Redis sessions and a persistent
+vector store.
 
 ## Configuration
 
