@@ -1,247 +1,123 @@
 # Architecture: where this is, and where it should go
 
-Four things, in order: how the system works today, what the evaluation
-taught us about that design, what building it taught us about the code, and
-what the north-star architecture looks like once evals stop being an errand
-and become infrastructure.
-
-`DESIGN.md` next door is the decision record — 23 numbered choices with
-their alternatives. This file is the shape of the system and its trajectory.
+Diagrams live in **[DIAGRAMS.md](DIAGRAMS.md)**. Decisions and their
+alternatives live in **[DESIGN.md](DESIGN.md)**. This file is the shape of
+the system, what building and running it taught us, and the trajectory.
 
 ---
 
-## 1. Current architecture
+## 1. Today
 
 **One process does everything.** The FastAPI app serves the UI, hosts both
 agents, *and* runs the evaluation as a background thread inside itself.
-Results are JSON and JSONL on local disk; the report is generated from those
-files on demand.
+Results are JSON and JSONL on local disk.
 
-```mermaid
-flowchart LR
-  subgraph NOW["Today — single process, file output"]
-    direction TB
-    A["FastAPI app<br/>UI + both agents"]
-    E["eval thread<br/>(same process)"]
-    F["local files<br/>scorecard.json · raw.jsonl"]
-    A <--> E
-    E --> F --> R["PDF on demand"]
-  end
-```
+Shape: **a monolith with an embedded test harness.** It answers *"which
+model is better, today, on this dataset?"* well — 44 items, zero errors, a
+signed conclusion.
 
-Shape: **a monolith with an embedded test harness.** Fit for answering
-*"which model is better, today, on this dataset?"* — which it does well:
-44 items, zero errors, a signed conclusion.
+**What's right:** the harness calls `POST /chat`, so it is a *client* of the
+app and cannot drift from what users get. The judge is a separate model
+family. Results are plain files, so every number is inspectable.
 
-### A single chat turn
-
-```mermaid
-sequenceDiagram
-    actor U as User
-    participant API as FastAPI
-    participant G as Guardrails
-    participant RT as run_turn()
-    participant M as SessionStore
-    participant T as Tools
-    participant P as Model (from config)
-
-    U->>API: POST /chat {session, agent, message}
-    API->>G: check_input()
-    G--xU: blocked if injection shape (no model call)
-    API->>RT: run_turn(config for that agent)
-    RT->>M: last 6 messages
-    M-->>RT: history
-    loop max 2 tool iterations
-        RT->>P: completion(history + tool schemas)
-        P-->>RT: tool_call or final text
-        opt tool_call
-            RT->>T: lookup_kb / search_web
-            T-->>RT: result, or error → circuit breaker opens
-        end
-    end
-    RT->>G: apply_output_guards()
-    G-->>RT: dosage redacted + disclaimer appended
-    RT->>M: save history
-    RT-->>U: answer + tool trace + latency
-```
-
-The load-bearing detail: `run_turn()` is **one function**, and `config` is
-the only thing that differs between the two agents. There is no subclass and
-no framework, so there is nowhere for a difference to hide. The verifier
-asserts there is exactly one `def run_turn` in the repo.
-
-### A single evaluation run
-
-```mermaid
-sequenceDiagram
-    actor Dev
-    participant P as FastAPI process
-    participant T as Eval thread<br/>(same process)
-    participant G as Guardrails<br/>(process-global flag)
-    participant M as Model APIs
-    participant FS as Local files
-
-    Dev->>P: POST /evals/run
-    P->>T: spawn background thread
-    T->>G: set_enabled(False)
-    Note over G: ⚠ also disables guardrails<br/>for live users on this server
-    loop 44 items, sequential, paced
-        T->>P: POST /chat (localhost)
-        P->>M: completion
-        M-->>P: answer
-        P-->>T: answer + latency
-        T->>M: judge call
-        M-->>T: verdict + reason
-    end
-    T->>FS: write scorecard.json + raw.jsonl
-    Note over T,FS: ⚠ written only at the end —<br/>a crash loses the whole run
-    Dev->>FS: render charts + PDF
-```
-
-### What's right, and what's structurally limited
-
-**Right:** the harness calls `POST /chat` — the same endpoint a person hits
-— so it is a *client* of the app, not a fork, and cannot drift from what
-users actually get. The judge is a separate model family. Results are plain
-files, so every number is inspectable and diffable.
-
-**Structurally limited** — these are consequences of the shape, not bugs:
+**What's structurally limited** — consequences of the shape, not bugs:
 
 | Limit | Consequence |
 |---|---|
-| Harness runs **inside** the system under test | Guardrail toggle leaks into live traffic; eval competes with the app for the same rate limits; a crash takes both down |
-| Results written **only at the end** | Two runs were lost to a sleeping laptop, each ~20 minutes of real quota |
-| Results are **files, not records** | They answer "what is it now?" and can never answer "did this get worse since Tuesday?" |
-| Scores carry **no version tuple** | A `scorecard.json` from `gpt-oss-20b` and one from `gemma-4` are not comparable, and nothing in the file format stops you comparing them |
+| Harness runs **inside** the system under test | Guardrail toggle leaks into live traffic; eval competes with the app for rate limits; a crash takes both down |
+| Results written **only at the end** | Two runs lost to a sleeping laptop, ~20 min of real quota each |
+| Results are **files, not records** | Answers "what is it now?", never "did this get worse since Tuesday?" |
+| Scores carry **no version tuple** | A scorecard from `gpt-oss-20b` and one from `gemma-4` are incomparable, and nothing in the format stops you comparing them |
 
 ---
 
 ## 2. What the evaluation taught us about the design
 
-Five findings from the committed run that could not have been asserted in
-advance. These are the most useful output of the whole project.
+Four findings that could not have been asserted in advance.
 
-### The scaffolding determines safety; the model determines accuracy
+**Scaffolding determines safety; the model determines accuracy.** Both
+agents scored *identically* on attack success (17%) and over-refusal (0%),
+while differing sharply on hallucination (50% vs 33%) and bias (50% vs 17%).
+Safety came from the parts held constant — prompt and guardrails.
 
-Both agents scored **identically** on attack success (17%) and over-refusal
-(0%), while differing sharply on hallucination (50% vs 33%) and bias
-(50% vs 17%).
+> Don't fix safety by swapping models. And note this is only visible
+> *because* the architecture is fixed: with per-model prompts, identical
+> safety numbers and divergent accuracy numbers would be uninterpretable.
 
-Safety behaviour came from the parts held constant — the shared prompt and
-the guardrails. Accuracy came from the model.
+**Guardrails are not uniformly effective.** 17% → 0% attack success on the
+frontier agent, unchanged on the open-source one, zero over-refusal cost on
+both.
 
-> **Implication:** do not try to fix safety by swapping models. Work the
-> prompt and guardrail layer. This is a decision the data made, and the
-> intuitive answer was wrong. It is also only visible *because* the
-> architecture is fixed — with per-model prompts, identical safety numbers
-> and divergent accuracy numbers would be uninterpretable.
+> A guardrail interacts with the model behind it, so its effect is a
+> per-deployment claim. The runtime toggle earned its place — without an A/B
+> on the same server this would have averaged to "17% → 8%" and hidden both
+> facts.
 
-### Guardrails are not uniformly effective
+**Judge reliability is axis-dependent.** κ = 1.00 on hallucination, but only
+**65% agreement** with the deterministic refusal classifier on safety.
 
-They took the frontier agent from 17% → 0% attack success and left the
-open-source agent unchanged, at zero over-refusal cost on both.
+> You cannot validate a judge once and call it validated. Ground truth
+> exists for hallucination and nothing else, so two of three axes are
+> unvalidated. This is the largest open gap in the platform.
 
-> **Implication:** a guardrail interacts with the model behind it. "We added
-> guardrails and attack success fell" is a claim you can only make per
-> deployment. The runtime toggle earned its place — without A/B on the same
-> server this would have averaged to "17% → 8%" and hidden both facts.
+**A broken tool corrupts measurements silently.** Web search failing inside
+the tool loop turned ~10s items into ~3-minute ones; the latency column was
+measuring a broken HTML parser rather than the models.
 
-### Judge reliability is axis-dependent
-
-κ = 1.00 on hallucination, but only **65% agreement** with the deterministic
-refusal classifier on safety.
-
-> **Implication:** you cannot validate a judge once and call it validated.
-> Ground truth exists for hallucination (MedHallu ships labels) and for
-> nothing else, so two of three axes are currently unvalidated. This is the
-> largest open gap in the platform.
-
-### A broken tool corrupts measurements silently
-
-Web search was failing inside the tool loop, turning ~10s items into
-~3-minute ones. The scorecard's latency column was measuring a broken
-HTML parser rather than the models.
-
-> **Implication:** an eval harness must distinguish *system* failure from
-> *model* failure. Hence: errored items excluded from safety denominators, a
-> `valid: false` flag past a 20% error rate, and a per-tool circuit breaker
-> so one dead dependency cannot dominate a latency distribution.
-
-### Derived text beats written text
-
-The report asserted *"latency favours the open-source agent"* — true of the
-run it was written against, false at 22.1s vs 6.6s.
-
-> **Implication:** every conclusion in the PDF is computed from the
-> scorecard, and the report refuses to state a comparison below 5 scored
-> items a side. A hand-written finding is a claim nobody re-checks.
+> An eval harness must distinguish *system* failure from *model* failure.
+> Hence errored items excluded from denominators, a `valid: false` flag past
+> a 20% error rate, and a per-tool circuit breaker.
 
 ---
 
 ## 3. What the build taught us about the code
 
-Eleven defects were found and fixed between the first working version and a
-clean run. The list matters less than the pattern in it.
+Eleven defects were found between the first working version and a clean run.
 
-| # | Defect | How it presented |
-|---|---|---|
-| 1 | `search_web` sent a **POST**; DuckDuckGo answers a POST from a non-browser client with a challenge page | `/diagnostics` said "returned 0 results" while the same query opened fine in a browser |
-| 2 | Retry sleep was **unbounded** | A provider answering "try again in 2h14m30s" turned one request into a hang with no error |
-| 3 | Groq's retry-hint wording was never parsed (only Gemini's was) | Groq limits fell back to a blind 20s/40s/80s backoff that could never clear a per-day cap |
-| 4 | Provider and API key **hardcoded per agent** | The documented `OSS_MODEL` override became a trap: pointing it at a Gemini model still sent the Groq key to Google, failing with `API key not valid` — an error pointing at the wrong cause |
-| 5 | No **circuit breaker** on a failing tool | A dead dependency was retried at full timeout on every loop iteration; ~10s items became ~3-minute ones |
-| 6 | `run_all` assigned `label = f"{agent}/{axis}"`, shadowing its own run-label parameter | A scorecard came out labelled `"frontier/safety"` instead of `"baseline (guardrails off)"` — silently mislabelling which configuration produced the numbers |
-| 7 | The latency finding was **hardcoded** to "favours the open-source agent" | True of the run it was written against; false at 22.1s vs 6.6s |
-| 8 | The guardrail finding read **only one agent** | Reported "no change" and hid the frontier agent going 17% → 0% |
-| 9 | Comparisons were stated with **no minimum sample size** | "Hallucination is a wash, both agents within 0 points" — drawn from 4 items on one side |
-| 10 | The UI rendered `---` as literal dashes | The output guardrail's disclaimer separator showed as text above every disclaimer |
-| 11 | Two UI error hints gave **stale advice** | "Edit `agents/config.py`" after model IDs moved to `.env`; "wait and retry" for a cap that refills daily |
+| Defect | How it presented |
+|---|---|
+| `search_web` sent a **POST**; DuckDuckGo answers a POST from a non-browser client with a challenge page | "returned 0 results" while the same query opened fine in a browser |
+| Retry sleep was **unbounded** | "try again in 2h14m30s" became a hang with no error |
+| Groq's retry-hint wording never parsed (only Gemini's was) | Groq limits fell back to a blind backoff that could never clear a per-day cap |
+| Provider and key **hardcoded per agent** | The documented `OSS_MODEL` override became a trap: it sent the Groq key to Google |
+| No **circuit breaker** on a failing tool | A dead dependency retried at full timeout every iteration |
+| `run_all` assigned `label = f"{agent}/{axis}"`, shadowing its own parameter | Scorecard labelled `"frontier/safety"` instead of the run label |
+| Latency finding **hardcoded** to "favours the open-source agent" | True of one run; false at 22.1s vs 6.6s |
+| Guardrail finding read **only one agent** | Reported "no change", hid frontier's 17% → 0% |
+| Comparisons stated with **no minimum sample size** | "Both agents within 0 points" — from 4 items on one side |
+| UI rendered `---` as literal dashes | Disclaimer separator showed as text |
+| Two UI error hints gave **stale advice** | Pointed at a file that no longer holds model IDs |
 
 ### The pattern: almost every one was silent
 
-None of these threw. Web search returned an empty list. The scorecard wrote
-a wrong label. The report asserted a conclusion its own data contradicted.
-Each was found by *looking*, not by a failure — which means the code's
-defect class is not "crashes" but "confidently wrong output."
+Nothing threw. Web search returned an empty list; the scorecard wrote a
+wrong label; the report asserted a conclusion its own data contradicted.
+Each was found by *looking*, not by a failure — so the defect class here is
+not "crashes" but **"confidently wrong output."**
 
-Three consequences worth carrying into any similar system:
+Three consequences that generalise:
 
-**Observability first, not fifteenth.** Defect 3 was invisible for an hour
+**Observability first, not fifteenth.** One defect was invisible for an hour
 because the only record of the retry warnings was scrolling past in a
-terminal. Adding a rotating file handler is what exposed the provider's full
-message — `tokens per day (TPD): Limit 200000, Used 199367` — which is the
-difference between "wait a minute" and "come back tomorrow." A long
-evaluation run is unattended by definition.
+terminal. A rotating file handler is what exposed the provider's full
+message — `tokens per day (TPD): Limit 200000, Used 199367` — the difference
+between "wait a minute" and "come back tomorrow." A long run is unattended
+by definition.
 
-**Anything asserted in prose that duplicates data is a latent bug.**
-Defects 7, 8 and 9 are all the same mistake: a conclusion written once
-against one dataset, surviving into a run whose numbers had moved. Every
-finding in the report is now computed, and the report refuses to state a
-comparison below five scored items a side.
+**Anything asserted in prose that duplicates data is a latent bug.** Three
+defects are the same mistake: a conclusion written once against one dataset,
+surviving into a run whose numbers had moved.
 
-**Derive, never duplicate.** Defect 4 and defect 6 are both a second copy of
-a fact drifting from the first. Provider and key now derive from the model
-id; pacing derives from the provider rather than the agent name.
-
-### What the code needs next, in order
-
-| # | Change | Why, from the list above |
-|---|---|---|
-| 1 | **Assertions on its own output** | Extend the n≥5 guard: fail loudly if `valid: true` but an axis is null, or if a scorecard has no label. Defects 6, 7 and 9 would have been caught at write time rather than by inspection |
-| 2 | **Checkpoint each item as it completes** | Results are written only at the end. Two runs were lost to a sleeping laptop, ~20 minutes of real quota each |
-| 3 | **Startup health gate** | `/diagnostics` existed but nothing ran it automatically. A broken web search should fail at boot, not corrupt a run's latency column forty minutes in |
-| 4 | **Structured logging with run and request ids** | Logging is currently plain text. Correlating a bad item back to its provider exchange is manual |
-| 5 | **Per-request guardrail config** | The toggle is process-global, so an eval run with guardrails off disables them for live traffic on that server |
-| 6 | **Authentication on the eval endpoints** | They are debug-gated, not authenticated; anyone who can reach them can spend your quota |
-| 7 | **Redis sessions, persistent vector store** | The actual blockers to more than one replica |
+**Derive, never duplicate.** Two more are a second copy of a fact drifting
+from the first — provider/key hardcoded per agent, and pacing keyed by agent
+name rather than by the provider that owns the rate limit.
 
 ---
 
 ## 4. The missing capability: failure attribution
 
-The scorecard says *"open-source: 50% hallucination."* That is a number you
-cannot act on, because five different causes produce it and each has a
-different fix:
+The scorecard says *"open-source: 50% hallucination."* That cannot be acted
+on, because five causes produce it and each has a different fix:
 
 | Cause | Fix |
 |---|---|
@@ -251,138 +127,84 @@ different fix:
 | A tool errored | engineering |
 | The judge was wrong | fix the instrument, not the agent |
 
-The cheapest high-value change to the platform is to **record which one it
-was, per failed item.** For hallucination that is a single extra field —
-*was the ground-truth-bearing chunk in the retrieved set?* If yes and the
-answer was still wrong, it is a prompt or model problem. If no, it is
-retrieval, and swapping models will not help at all.
+The cheapest high-value change is to **record which one, per failed item.**
+For hallucination that is one extra field — *was the ground-truth-bearing
+chunk in the retrieved set?* If yes and the answer was still wrong, it's a
+prompt or model problem. If no, it's retrieval, and swapping models won't
+help at all.
 
-Without this you are optimising blind. With it the scorecard stops being a
-report card and becomes a work queue.
+Without this you optimise blind. With it, the scorecard stops being a report
+card and becomes a work queue.
 
 ---
 
 ## 5. North star
 
-```mermaid
-flowchart LR
-  subgraph NS["North star — separated, durable, continuous"]
-    direction TB
-    SUT["System under test<br/>(deployed, versioned)"]
-    ORC["Orchestrator + work queue"]
-    WRK["Workers (parallel)"]
-    JP["Judge pool<br/>2+ families"]
-    DB[("Results store<br/>versioned runs")]
-    HR["Human review<br/>(disagreements only)"]
-    CI["CI gate"]
-    ONL["Online eval<br/>sampled prod traffic"]
-    ORC --> WRK --> SUT
-    WRK --> JP --> HR
-    WRK --> DB
-    DB --> CI
-    ONL --> DB
-  end
-```
-
-```mermaid
-sequenceDiagram
-    actor CI
-    participant O as Orchestrator
-    participant Q as Work queue
-    participant W as Workers (n)
-    participant SUT as System under test<br/>(deployed, versioned)
-    participant J as Judge pool<br/>(2+ families)
-    participant DB as Results store
-    participant H as Human review queue
-
-    CI->>O: evaluate(build sha, dataset v, judge v)
-    O->>DB: open run, record the version tuple
-    O->>Q: enqueue one job per (item × agent)
-    par workers pull independently
-        W->>Q: claim job
-        W->>SUT: call over the network
-        SUT-->>W: answer
-        W->>J: score with judge A and judge B
-        J-->>W: two verdicts
-        W->>DB: checkpoint this item
-        alt judges disagree
-            W->>H: route for human adjudication
-        end
-    end
-    O->>DB: aggregate, diff against frozen baseline
-    O-->>CI: pass / fail on regression thresholds
-```
-
-### Why each change
+Four structural changes: **harness outside the system under test**,
+**per-item checkpointing on a queue**, **results in a store keyed by a
+version tuple** (build · dataset · prompt · judge · guardrails), and
+**evaluation as a gate rather than an errand**. Sequence diagram in
+[DIAGRAMS.md](DIAGRAMS.md).
 
 | Change | The pain it fixes |
 |---|---|
-| **Harness outside the SUT** | Guardrail toggle stops leaking into live traffic; a run cannot compete with the app for quota; either restarts without the other |
-| **Queue + workers, checkpoint per item** | Two runs lost to a sleeping laptop. At 45 minutes and real quota per run, resumability is not a nicety |
-| **Version tuple recorded per run** (build · dataset · prompt · judge · guardrails) | A score is only meaningful as a tuple of what produced it. Today two incomparable scorecards can sit in one folder with nothing to stop you comparing them |
-| **Results store, not files** | Files answer "what is it now?". Only a store answers "did this get worse?" — the question that matters once you are shipping |
-| **Two judge families, humans on disagreement only** | 65% agreement on safety means a third of verdicts are contested and we cannot say which third. Routing *only* disagreements bounds judge error instead of caveating it, and keeps the expensive human step small |
-| **CI gates on regression thresholds** | Evals are currently something a person runs. They should block a merge — that is the difference between measurement and ceremony |
-| **Parallel workers** | 45 minutes sequential, purely because the harness shares rate limits with the app it is testing |
-| **Online evaluation** | Offline sets go stale and never contain the thing that actually breaks you. Offline catches regressions; online catches drift |
+| Harness outside the SUT | Guardrail toggle stops leaking into live traffic; runs stop competing with the app for quota |
+| Queue + workers, checkpoint per item | Two runs lost to a sleeping laptop; at 45 min and real quota per run, resumability isn't a nicety |
+| Version tuple per run | A score is only meaningful as a tuple of what produced it |
+| Results store, not files | Only a store answers "did this get worse?" — the question that matters once you're shipping |
+| Two judge families, humans on disagreement only | 65% agreement on safety means a third of verdicts are contested; routing *only* disagreements bounds judge error and keeps the human step small |
+| CI gates on regression thresholds | Evals are currently something a person runs. They should block a merge |
+| Parallel workers | 45 min sequential, purely because the harness shares rate limits with the app |
+| Online eval on sampled traffic | Offline sets go stale and never contain the thing that breaks you |
 
 ### What it buys the business
 
-1. **Ship velocity.** Without a gate, every prompt change is a gamble and
-   the team slows down out of fear. With one, you ship *faster* because you
-   can prove you did not break anything. Usually the largest and least
-   discussed return.
-2. **Model cost arbitrage.** If an open model is good enough for even 60% of
-   traffic, that is a direct margin line. Today's data says **not yet** —
-   the frontier model is more accurate *and* 3.4× faster. But open models
-   improve monthly, and the instrument is how you notice the day it flips.
-3. **Quantified liability.** Wellness advice is medical-adjacent. "17%
-   attack success, 0% over-refusal" is exposure with a number on it — what
-   an incident review, an enterprise security questionnaire or a regulator
-   will ask for. "We don't measure that" is the wrong answer in all three.
-4. **Vendor independence.** Demonstrated equivalence lets you switch
-   providers when one raises prices or degrades. This project lived it:
-   Groq's per-day cap forced a model change mid-build. Measurement is what
-   makes that a config change rather than a crisis.
-5. **Trust as a product feature.** In health, publishing a measured
-   hallucination rate is a sales asset, not just hygiene.
+**Ship velocity** — without a gate every prompt change is a gamble and the
+team slows down out of fear; with one you ship *faster* because you can
+prove you didn't break anything. Usually the largest and least-discussed
+return.
 
-**Cost, honestly.** The pipeline is roughly a week of engineering. Each run
-is a few hundred model calls — cents on a paid tier. The genuinely expensive
-line is human adjudication, which is exactly why only judge disagreements
-get routed to a person.
+**Model cost arbitrage** — if an open model is good enough for even 60% of
+traffic that's a direct margin line. Today's data says *not yet*, but open
+models improve monthly and this is how you notice the day it flips.
+
+**Quantified liability** — wellness advice is medical-adjacent. "17% attack
+success, 0% over-refusal" is exposure with a number on it, which is what an
+incident review, a security questionnaire or a regulator will ask for.
+
+**Vendor independence** — demonstrated equivalence lets you switch when a
+provider raises prices or degrades. This project lived it: Groq's per-day
+cap forced a model change mid-build.
+
+**Trust as a product feature** — in health, publishing a measured
+hallucination rate is a sales asset.
+
+*Cost:* roughly a week of engineering; each run is a few hundred model calls
+— cents on a paid tier. The expensive line is human adjudication, which is
+why only judge disagreements reach a person.
 
 ---
 
-## 6. Roadmap — ordered by value per unit of effort
+## 6. Roadmap — by value per unit of effort
 
-The instinct is to build the pipeline first. That is wrong: the two cheapest
-items capture most of the value.
+The instinct is to build the pipeline first. That's wrong: items 1 and 2
+cost about a day together and capture most of the value.
 
 | # | Build | Effort | Why here |
 |---|---|---|---|
-| 1 | **Frozen baseline + CI gate** | Hours | Stops regressions immediately, needs no new infrastructure — diff two JSON files against a pinned `baseline.json` |
-| 2 | **Failure attribution** (§3) | ~1 day | Turns "50% hallucination" into "retrieval missed the chunk". Report card → work queue |
-| 3 | **Ground truth for bias + safety** | Days | Two of three axes are unvalidated; the judge agrees with the rule classifier only 65% on safety. ~50 hand-labelled items per axis moves them from indicative to measured |
-| 4 | **Multi-turn eval cases** | Days | Every case is single-turn today. Jailbreaks and hallucination drift are both strongest *across* turns — the platform measures the easy case and calls it safety |
-| 5 | **Scale with stratification** | Days | n=6 means one item moves a rate 17 points. Tag items easy / medium / adversarial — "failed 50%" means something different depending on which half |
-| 6 | **Second judge + disagreement routing** | ~1 week | Bounds judge error rather than caveating it |
-| 7 | **Queue, workers, results store** | ~1 week | Only pays once runs are frequent and someone depends on them |
-| 8 | **Online eval on sampled traffic** | ~1 week | Catches drift that a frozen offline set never will |
+| 1 | Frozen baseline + CI gate | Hours | Stops regressions immediately; no new infrastructure — diff two JSON files |
+| 2 | Failure attribution (§4) | ~1 day | Report card → work queue |
+| 3 | Ground truth for bias + safety | Days | Two of three axes unvalidated; ~50 labelled items per axis |
+| 4 | Multi-turn eval cases | Days | Jailbreaks are strongest *across* turns; we measure the easy case |
+| 5 | Scale with stratification | Days | n=6 means one item moves a rate 17 points |
+| 6 | Second judge + disagreement routing | ~1 week | Bounds judge error rather than caveating it |
+| 7 | Separate harness, queue, results store | ~1 week | Pays once runs are frequent and someone depends on them |
+| 8 | Online eval on sampled traffic | ~1 week | Catches drift a frozen offline set never will |
 
-### Smaller items worth doing
-
-- **Per-request guardrail config** instead of a process-global flag, so an
-  eval run cannot affect live traffic.
-- **Judge regression fixtures in CI** — known-correct, known-hallucinated,
-  known-ambiguous — so a judge prompt change that degrades accuracy fails
-  the build instead of silently shifting every score in the next report.
-- **Authentication on the eval endpoints.** They are debug-gated, not
-  authenticated; anyone who can reach them can spend your quota.
-- **Cost telemetry from provider response headers** rather than published
-  price lists, so the cost table reflects real token accounting.
-- **Sessions in Redis and a persistent vector store** — the actual blockers
-  to running more than one replica.
+**Code track**, from §3: assertions on its own output; checkpoint each item;
+startup health gate; structured logging with run/request ids; per-request
+guardrail config; auth on the eval endpoints; Redis sessions and a
+persistent vector store.
 
 ---
 

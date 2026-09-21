@@ -175,17 +175,29 @@ def static_checks() -> None:
         check(f"README section: {label}", needle.lower() in readme.lower())
 
     design = _read("docs/DESIGN.md")
-    check("Design document with alternatives and trade-offs",
-          len(design) > 5000 and "Alternatives" in design, f"{len(design)} chars")
-    check("Design document includes diagrams",
-          design.count("```mermaid") >= 3, f"{design.count('```mermaid')} diagrams")
+    check("Design document records alternatives and known limitations",
+          "Alternatives rejected" in design and "Known limitations" in design,
+          f"{len(design)} chars")
 
     arch = _read("docs/ARCHITECTURE.md")
-    check("Architecture doc covers current design and north star",
-          "north star" in arch.lower() and "sequenceDiagram" in arch,
-          f"{arch.count('```mermaid')} diagrams, {len(arch)} chars")
-    check("Architecture doc carries a prioritised roadmap",
-          "Roadmap" in arch and "Effort" in arch)
+    check("Architecture doc covers today, the north star and a roadmap",
+          all(k in arch for k in ("North star", "Roadmap", "Effort")),
+          f"{len(arch)} chars")
+
+    # Diagrams live in one file so they stay together and stay rendered.
+    diagrams = _read("docs/DIAGRAMS.md")
+    check("Diagrams file carries sequence diagrams for both flows",
+          diagrams.count("sequenceDiagram") >= 3,
+          f"{diagrams.count('```mermaid')} diagrams, "
+          f"{diagrams.count('sequenceDiagram')} of them sequence")
+
+    # Docs are meant to stay readable. These caps are deliberate: the point
+    # of splitting DIAGRAMS.md out was to stop any one file sprawling.
+    for name, path, cap in (("README", "README.md", 320),
+                            ("ARCHITECTURE", "docs/ARCHITECTURE.md", 260),
+                            ("DESIGN", "docs/DESIGN.md", 220)):
+        lines = _read(path).count("\n")
+        check(f"{name} stays concise (<= {cap} lines)", lines <= cap, f"{lines} lines")
 
     report_doc = _read("evals/report_doc.py")
     check("1-page report is generated from the data, not hand-written",
