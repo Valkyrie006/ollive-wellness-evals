@@ -180,89 +180,55 @@ no secrets configured.
 
 ## Architecture
 
-```
-  Browser (ui/index.html)
-        │  POST /chat {session_id, agent, message}
-        ▼
-  FastAPI (api/main.py)
-    ├─ request id · rate limit · security headers
-    ├─ guardrails.check_input()            ← deterministic, pre-model
-    ▼
-  agents/core.run_turn()                   ← THE fixed architecture
-    ├─ SessionStore: history in, history out  (short-term memory)
-    ├─ system prompt (agents/prompts.py)      identical for both agents
-    ├─ tool loop, bounded iterations + per-tool circuit breaker
-    │    ├─ lookup_kb(query, k)   → Chroma → wellness KB
-    │    └─ search_web(query)     → DuckDuckGo
-    ├─ LiteLLM completion  ← the ONLY model-specific value, from config.py
-    └─ guardrails.apply_output_guards()    ← deterministic, post-model
-        │
-        ▼
-  answer + tool trace + latency
-```
+Both agents call **one** `run_turn()` in `agents/core.py`. `agents/config.py`
+holds a model id and a key name — the only difference between them. There is
+no subclass and no agent framework, so there is nowhere for a difference to
+hide; `scripts/verify_requirements.py` asserts the repo contains exactly one
+`def run_turn`.
 
-The evals platform drives that same HTTP surface — it is a client of the
-app, not a fork of it, so anything it measures is what a user would get.
+The evals platform drives that same `POST /chat`. It is a **client of the
+running app, not a fork**, so whatever it measures is what a user gets.
 
 ```
-  evals/datasets/prepare.py   MedHallu · BBQ · JailbreakBench → jsonl
-        ▼
-  evals/runner.py             POST /chat per item, per agent, paced
-        ▼
-  evals/judge.py              third model family, temperature 0, per-axis prompt
-        ▼
-  evals/meta_check.py         judge vs. dataset ground truth → κ
-        ▼
-  evals/report.py + report_doc.py   → comparison.png, judge_quality.png, PDF
+ui/  →  api/main.py  →  agents/core.run_turn()  →  tools → kb/ · web
+                              ↑                         ↕
+                    agents/config.py            agents/guardrails.py
+                 (the only difference)        (in front and behind)
+
+evals/datasets → evals/runner → evals/judge → evals/meta_check → report
 ```
 
-### Key architecture decisions
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** has the real diagrams —
+sequence diagrams for a chat turn, an evaluation run as it works today, and
+as it should work — plus what the evaluation taught us about this design and
+where it should go next.
 
-The full list with alternatives and costs is in
-**[docs/DESIGN.md](docs/DESIGN.md)**. The five that shape everything else:
+**[docs/DESIGN.md](docs/DESIGN.md)** is the decision record: 23 numbered
+choices, each with the alternatives and what they would have cost.
 
-**1. "Fixed architecture" enforced by imports, not by discipline.**
-Both agents call one `run_turn()`. `agents/config.py` holds the only
-difference. The alternative — a base class with two subclasses — was
-rejected because a subclass *can* override a method, so the guarantee
-becomes a code-review promise rather than a structural fact. LangChain or
-LangGraph were rejected for the same reason plus one more: they route the
-call through their own abstractions, and then "identical architecture" is a
-claim about a framework's internals rather than about this repo.
+The four that shape everything else:
 
-**2. The judge is a different model family from both agents.**
-The judge is `qwen3.8-27b` (Alibaba, on Groq). A judge sharing a family
-with a subject invites self-preference bias, and that bias would land
-exactly on the comparison this project exists to make. This constraint is
-what kept the judge on Groq even after both agents moved off it.
+**Fixed architecture enforced structurally.** A base class with two
+subclasses was rejected because a subclass *can* override a method — the
+guarantee becomes a code-review promise rather than a fact. LangChain and
+LangGraph were rejected for the same reason plus one more: the identity
+claim becomes a claim about a framework's internals rather than about this
+repo.
 
-**3. The judge is judged against ground truth, not vibes.**
-MedHallu ships a known-correct *and* a known-hallucinated answer per
-question, so the judge's verdicts can be scored for accuracy, precision,
-recall and **Cohen's κ** — κ rather than raw agreement because raw
-agreement flatters any judge on an unbalanced set. Hand-labelling was the
-alternative; at this scale it would have meant an LLM labelling for an LLM
-judge, which measures nothing.
+**The judge is a different model family from both agents** (`qwen3.8-27b`).
+A judge sharing a family with a subject invites self-preference bias, which
+would land exactly on the comparison this project exists to make. That
+constraint is what kept the judge on Groq after both agents moved off it.
 
-**4. Both agents ended up on one provider — deliberately, and with a cost.**
-The open-source agent started on Groq (`gpt-oss-20b`) and produced a full
-set of results there. Then Groq's free tier hit its **per-day** token cap
-(`Limit 200000, Used 199367`), which cannot be waited out inside a run. The
-open-weights agent moved to `gemma-4-26b-a4b-it` on Google AI Studio: open
-weights, free, no card, tool-calling support, ~20s per turn. The honest
-consequence is that open-vs-frontier is now compared *inside one vendor's
-lineup*. That removes provider infrastructure as a confound — same serving
-stack, same API, so a latency gap is the model and not the vendor — but it
-is a narrower claim than a cross-vendor comparison would be. Setting
-`OSS_MODEL=groq/openai/gpt-oss-20b` restores the cross-vendor setup on a key
-with daily tokens to spare.
+**The judge is scored against ground truth, not vibes.** MedHallu ships a
+known-correct *and* a known-hallucinated answer per question, so verdicts
+get accuracy, precision, recall and **Cohen's κ** — κ rather than raw
+agreement, because raw agreement flatters any judge on an unbalanced set.
 
-**5. Safety is two opposite failures, never one number.**
-`attack_success_rate` (complied with a jailbreak) and `over_refusal_rate`
-(refused a benign question about a sensitive topic) are reported
-separately. Averaging them produces a score a model can improve by refusing
-everything, which is the exact failure mode a wellness assistant must not
-have.
+**Safety is two opposite failures, never one number.** `attack_success_rate`
+and `over_refusal_rate` are reported separately. Averaging them yields a
+score a model improves by refusing everything — the exact failure a wellness
+assistant must not have.
 
 ## Running the evaluation
 

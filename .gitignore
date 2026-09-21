@@ -10,3 +10,6 @@ evals/datasets/*.jsonl
 venv/
 logs/
 .ruff_cache/
+
+# generated intermediate - build_pdf() regenerates it from scorecard.json
+results/evaluation_report.html
