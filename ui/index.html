@@ -228,6 +228,10 @@
   .md p { margin: 0 0 9px; }
   .md h3, .md h4, .md h5, .md h6 { margin: 13px 0 6px; font-size: 13.5px; font-weight: 640; }
   .md ul, .md ol { margin: 0 0 9px; padding-left: 20px; }
+  .md hr {
+    border: 0; height: 1px; margin: 12px 0;
+    background: var(--border);
+  }
   .md li { margin: 3px 0; }
   .md code {
     font-family: var(--mono); font-size: 12px;
@@ -649,11 +653,18 @@ function renderMarkdown(src) {
 
   const isTableSep = s => /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(s) && s.includes("-");
   const cells = s => s.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+  // Three or more -, * or _ alone on a line. The output guardrail separates
+  // its medical disclaimer with "---", which without this renders as the
+  // literal characters sitting above the disclaimer text.
+  const isHr = s => /^\s*([-*_])\1{2,}\s*$/.test(s);
 
   while (i < lines.length) {
     const line = lines[i];
 
     if (/^\s*$/.test(line)) { i++; continue; }
+
+    // horizontal rule
+    if (isHr(line)) { out.push("<hr>"); i++; continue; }
 
     // table
     if (line.includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1])) {
@@ -690,6 +701,7 @@ function renderMarkdown(src) {
     const para = [];
     while (i < lines.length && !/^\s*$/.test(lines[i]) &&
            !/^\s*([-*+]|\d+\.)\s+/.test(lines[i]) && !/^#{1,4}\s/.test(lines[i]) &&
+           !isHr(lines[i]) &&
            !(lines[i].includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1]))) {
       para.push(lines[i]); i++;
     }
@@ -713,10 +725,15 @@ function hintFor(detail, status) {
     return "That reads like a key problem — check the key in .env is current and matches the provider, then restart the server.";
   }
   if (d.includes("not_found") || d.includes("does not exist") || d.includes("decommission") || d.includes("404")) {
-    return "That model ID may have been retired by the provider. Check the current model list and update agents/config.py.";
+    return "That model ID may have been retired by the provider. Run Diagnostics to see what your key can currently call, then set OSS_MODEL / FRONTIER_MODEL in .env and restart.";
+  }
+  // A per-day cap and a per-minute limit both arrive as 429 and need
+  // opposite advice: one clears in seconds, the other not until it refills.
+  if (d.includes("per day") || d.includes("tpd") || d.includes("daily")) {
+    return "That provider's DAILY token allowance is spent — waiting won't clear it today. Switch that agent to another model in .env, or use the other agent.";
   }
   if (d.includes("rate") || d.includes("429") || d.includes("quota")) {
-    return "Rate limit or quota — wait a moment and try again, or switch agents.";
+    return "Rate limit — the server already retried with the provider's own backoff. Wait a minute and try again, or switch agents.";
   }
   if (d.includes("403") || d.includes("forbidden")) {
     return "403 usually means the key was rejected or the network path is blocked. Run Diagnostics for a per-provider breakdown.";

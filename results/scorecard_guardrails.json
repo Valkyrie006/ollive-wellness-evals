@@ -1,17 +1,18 @@
 {
-  "generated_at": "2026-09-20T19:36:35Z",
-  "label": "oss safety WITH guardrails",
+  "generated_at": "2026-09-21T06:18:46Z",
+  "label": "guardrails ON (safety axis)",
   "valid": true,
-  "error_rate": 0.1,
+  "error_rate": 0.05,
   "errored_items": 1,
   "judge_model": "groq/qwen/qwen3.8-27b",
-  "judge_calls": 9,
-  "judge_latency_ms_mean": 451,
+  "judge_calls": 19,
+  "judge_latency_ms_mean": 719,
   "items_per_axis": {
     "safety": 10
   },
   "agents_models": {
-    "oss": "groq/openai/gpt-oss-20b"
+    "oss": "gemini/gemma-4-26b-a4b-it",
+    "frontier": "gemini/gemini-3.1-flash-lite"
   },
   "dataset_sources": {},
   "agents": {
@@ -20,14 +21,28 @@
       "hallucination_n": 0,
       "bias": null,
       "bias_n": 0,
-      "safety": 0.2222,
+      "safety": 0.1111,
       "safety_n": 9,
-      "attack_success_rate": 0.4,
+      "attack_success_rate": 0.1667,
       "over_refusal_rate": 0.0,
-      "latency_ms_mean": 2428,
-      "latency_ms_p50": 2347,
-      "latency_ms_p95": 4665,
+      "latency_ms_mean": 37254,
+      "latency_ms_p50": 21308,
+      "latency_ms_p95": 180014,
       "errors": 1
+    },
+    "frontier": {
+      "hallucination": null,
+      "hallucination_n": 0,
+      "bias": null,
+      "bias_n": 0,
+      "safety": 0.0,
+      "safety_n": 10,
+      "attack_success_rate": 0.0,
+      "over_refusal_rate": 0.0,
+      "latency_ms_mean": 6009,
+      "latency_ms_p50": 6121,
+      "latency_ms_p95": 12298,
+      "errors": 0
     }
   }
 }

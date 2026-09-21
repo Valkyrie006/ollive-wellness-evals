@@ -21,6 +21,138 @@ measures the scaffolding instead of the models.
 
 ---
 
+## The system, in four pictures
+
+Four things about this design are hard to see from prose alone: that there
+is genuinely only one code path, what a single request actually does, how
+the judge gets judged, and why safety refuses to collapse into one number.
+
+### 1. Why "fixed architecture" is structural, not a promise
+
+The requirement is that the two agents differ *only* by model. The obvious
+shape — a base class with two subclasses — cannot enforce that, because a
+subclass can always override a method. The guarantee then rests on nobody
+ever doing so. Injecting a config into one function removes the place a
+difference could live:
+
+```mermaid
+flowchart TB
+    subgraph R["Rejected: base class + subclasses"]
+        direction TB
+        BA["BaseAgent.run_turn()"]
+        OA["OssAgent"] -. "can override" .-> BA
+        FA["FrontierAgent"] -. "can override" .-> BA
+    end
+    subgraph C["Chosen: one function, config injected"]
+        direction TB
+        OC["OSS_CONFIG<br/>model id + key env"]
+        FC["FRONTIER_CONFIG<br/>model id + key env"]
+        RT["agents/core.run_turn()<br/><b>the only code path</b>"]
+        OC -- "passed in" --> RT
+        FC -- "passed in" --> RT
+    end
+    R ~~~ C
+```
+
+*On the left the dashed arrows are the whole problem: they are edges that
+may or may not exist at runtime. On the right there are none, because there
+is no second implementation to diverge.*
+
+### 2. What one request actually does
+
+Short-term memory, the tool loop, the guardrails and the circuit breaker
+are separate features in the prose; in the code they are one path, and the
+order matters:
+
+```mermaid
+flowchart TB
+    U(["user message"]) --> GI["guardrails.check_input()<br/>injection shape, not topic"]
+    GI -- "blocked" --> BR(["refusal, no model call"])
+    GI -- "allowed" --> H["SessionStore.get()<br/>last 6 messages"]
+    H --> M{"LiteLLM completion<br/>model from config"}
+    M -- "text answer" --> GO["guardrails.apply_output_guards()<br/>redact dosage, append disclaimer"]
+    M -- "tool call" --> CB{"failed earlier<br/>this turn?"}
+    CB -- "yes" --> SKIP["return recorded error<br/><b>no network call</b>"]
+    CB -- "no" --> T["lookup_kb / search_web"]
+    T -- "ok" --> FEED["append tool result"]
+    T -- "raises" --> REC["record failure<br/>open the breaker"]
+    REC --> FEED
+    SKIP --> FEED
+    FEED --> LIM{"iteration cap<br/>reached?"}
+    LIM -- "no" --> M
+    LIM -- "yes" --> NUDGE["'answer now, no more tools'"]
+    NUDGE --> M
+    GO --> S["SessionStore.set()"]
+    S --> A(["answer + tool trace + latency"])
+```
+
+*Both guardrail steps are deterministic and sit outside the model, so they
+can be toggled for an A/B without changing what the model sees in between.
+The `CB` branch is the circuit breaker from decision 20 — the edge that
+stops a dead tool being retried at full timeout on every iteration.*
+
+### 3. How the judge gets judged
+
+The spec asks for an assessment of the judge. The mechanism is the loop on
+the right: MedHallu's labels are used **twice** — once to give the agent a
+question, and once to score the judge's verdict on the answer:
+
+```mermaid
+flowchart LR
+    subgraph DATA["1 . datasets"]
+        MH["MedHallu<br/>correct + hallucinated<br/>per question"]
+        BBQ["BBQ<br/>stereotype pairs"]
+        JB["JailbreakBench<br/>+ benign controls"]
+    end
+    subgraph RUN["2 . scoring"]
+        AG["POST /chat<br/>per item, per agent, paced"]
+        JU["judge<br/>3rd model family, temp 0"]
+        AG --> JU
+    end
+    subgraph OUT["4 . outputs"]
+        SC["scorecard.json<br/>+ valid flag"]
+        RAW["raw.jsonl<br/>every verdict + reason"]
+        PDF["1-page PDF<br/>+ infographics"]
+    end
+    MH --> AG
+    BBQ --> AG
+    JB --> AG
+    JU --> SC
+    JU --> RAW
+    SC --> PDF
+    MH -- "3 . ground-truth labels" --> MC["meta_check<br/>accuracy / precision / recall<br/>F1 / Cohen's kappa"]
+    JU -- "same verdicts,<br/>scored against labels" --> MC
+    MC -- "is the judge trustworthy?" --> PDF
+```
+
+*Note that the evals platform enters through `POST /chat` — it is a client
+of the running app, not a fork of it, so whatever it measures is what a
+user would get.*
+
+### 4. Why safety is two numbers
+
+A single "safety score" can be improved by refusing everything. Splitting
+the prompt set into genuinely harmful and benign-but-sensitive gives two
+failures that move in opposite directions:
+
+```mermaid
+flowchart TB
+    P(["prompt"]) --> K{"is the prompt<br/>actually harmful?"}
+    K -- "harmful<br/>(JailbreakBench)" --> H{"agent response"}
+    K -- "benign but sensitive<br/>(controls)" --> B{"agent response"}
+    H -- "refused" --> HG["correct refusal"]
+    H -- "complied" --> HB["<b>attack success</b><br/>measured failure #1"]
+    B -- "answered" --> BG["correct answer"]
+    B -- "refused" --> BB["<b>over-refusal</b><br/>measured failure #2"]
+    HB -.-> WHY["averaging these two<br/>hides an agent that<br/>refuses everything:<br/>perfect on #1, fails #2"]
+    BB -.-> WHY
+```
+
+*The benign controls are the part that is easy to leave out and expensive
+to omit: without them, the safest-looking agent is the most useless one.*
+
+---
+
 ## 1. Keeping the architecture genuinely fixed
 
 **Approach.** One `run_turn()` in `agents/core.py`, imported unchanged by

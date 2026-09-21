@@ -289,9 +289,13 @@ def run_all(base_url: str = "http://127.0.0.1:8000", agents=("oss", "frontier"),
     for agent in agents:
         for axis, items in data.items():
             logger.info("evals: %s / %s (%d items)", agent, axis, len(items))
-            label = f"{agent}/{axis}"
+            # NOT `label` - that is this function's run-label parameter, and
+            # assigning to it here silently overwrote the caller's label with
+            # the last axis name, so a scorecard came out labelled
+            # "frontier/safety" instead of "baseline (guardrails off)".
+            phase_label = f"{agent}/{axis}"
 
-            def tick(_label=label):
+            def tick(_label=phase_label):
                 counter["done"] += 1
                 if progress:
                     progress(counter["done"], total, _label)

@@ -19,6 +19,19 @@ the memory handling, and the retry logic are shared code, and
 
 ## Requirements coverage
 
+Every row below is checked by a script, so it is verifiable rather than
+asserted:
+
+```bash
+python scripts/verify_requirements.py            # static, no keys needed
+python scripts/verify_requirements.py --live     # also exercises a running server
+```
+
+It exits non-zero on any failure and runs in CI on every push. The `--live`
+pass actually talks to both agents: it confirms each one grounds an answer
+in the knowledge base with a real `lookup_kb` call, remembers a name across
+turns, and forgets it after `POST /reset`.
+
 | Requirement | Where it lives | Notes |
 |---|---|---|
 | Wellness Assistant on an **open-source model** | `agents/config.py` → `OSS_CONFIG` | `gemma-4-26b-a4b-it` (open weights) via Google AI Studio, free tier |
@@ -40,28 +53,110 @@ the memory handling, and the retry logic are shared code, and
 | **Bonus**: publicly deployed OSS model | AI-Studio-hosted `gemma-4-26b-a4b-it` | Open weights, publicly reachable, free tier |
 | **Bonus**: cost + latency table | in the PDF report | Per-agent p50/p95 latency and per-1k-token cost |
 
-## Quick start
+## Setup
+
+Everything below is free and needs no payment card. Budget about ten
+minutes, most of it waiting for `pip`.
+
+### Prerequisites
+
+- **Python 3.9 or newer.** `python3 --version` to check. 3.9 is the floor
+  on purpose — it is what ships with macOS, so this runs without anyone
+  installing a toolchain first. CI tests 3.9 and 3.12.
+- **~2 GB free disk**, mostly for PyTorch and the embedding model.
+- **git**.
+
+### 1. Get the two API keys
+
+Both are free tier with no card required. You need both: one serves the
+agents, the other serves the evaluation judge.
+
+| Key | Where | Used for |
+|---|---|---|
+| `GOOGLE_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → *Create API key* | Both assistants (Gemma and Gemini) |
+| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) → *Create API Key* | The evaluation judge (Qwen) only |
+
+Sign in with a Google account for the first and a GitHub or Google account
+for the second. Copy each key when it is shown — Groq will not show it
+again.
+
+> **You can run the chat app with only the Google key.** Groq is needed
+> just for the evals harness, because the judge must come from a different
+> model family than the agents it scores. If you only want to try the
+> assistant, leave `GROQ_API_KEY` blank.
+
+### 2. Install
 
 ```bash
 git clone https://github.com/Valkyrie006/wellness-assistant-evals.git
 cd wellness-assistant-evals
 
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-cp .env.example .env     # then add your two free API keys
-uvicorn api.main:app --reload --port 8000
 ```
 
-Open <http://localhost:8000>. First start takes an extra minute while the
-embedding model downloads.
+### 3. Add your keys
 
-Both providers are **free tier, no card required**:
-[Groq](https://console.groq.com/keys) and
-[Google AI Studio](https://aistudio.google.com/apikey).
+```bash
+cp .env.example .env
+```
 
-Runs on Python 3.9+ (CI pins 3.9 and 3.12 — the floor is deliberate, see
-tradeoffs).
+Open `.env` and paste the keys in:
+
+```
+GOOGLE_API_KEY=AIza...your-key...
+GROQ_API_KEY=gsk_...your-key...
+```
+
+`.env` is gitignored. Nothing here ever logs a key; `/diagnostics` shows
+only a prefix and a length, which is enough to tell "wrong key" from "no
+key" without printing a secret.
+
+### 4. Run it
+
+```bash
+uvicorn api.main:app --port 8000
+```
+
+Open **<http://localhost:8000>**.
+
+The **first** start takes an extra minute or two: it downloads the
+`all-MiniLM-L6-v2` embedding model (~90 MB) and builds the vector index
+over the knowledge base. Later starts take a few seconds. You will know it
+is ready when the log prints `startup complete`.
+
+Try asking *"What does the knowledge base say about meditation for
+beginners?"* — you should see a `lookup_kb()` chip under the answer, which
+is the retrieval actually happening rather than the model recalling
+something. Then tell it your name, ask something else, and ask what your
+name was: that is the short-term memory, and it answers with no tool call.
+
+Use the **agent switcher** at the top to send the same question to the
+frontier model and compare.
+
+### 5. Check everything is wired up
+
+Click **Diagnostics** in the header, or:
+
+```bash
+curl -s localhost:8000/diagnostics | python3 -m json.tool
+```
+
+It calls each provider, the knowledge base, the embedder and web search,
+and reports what each one actually said. This is the first thing to reach
+for when something breaks — it turns "it's broken" into a named cause.
+
+### Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `503` and a message naming a key | That key is missing from `.env`. The app fails loudly here rather than letting you see a confusing upstream auth error. |
+| `model_not_found` / `404` from a provider | The provider retired the model ID. Hit `GET /available-models` to see what your key can currently call, then set `OSS_MODEL` / `FRONTIER_MODEL` / `JUDGE_MODEL` in `.env`. No code change needed. |
+| `429`, or a chat that takes minutes | Free-tier rate limit. The app parses the provider's own retry hint and backs off, but caps total sleep at 75s and then fails with the provider's message. If it says **tokens per day**, that tier is done until it refills — switch models in `.env`. |
+| Web search returns an error chip | The DuckDuckGo endpoints are being rate-limited or blocked on your network. `lookup_kb` still works; the agent is told the tool failed and answers from the KB instead. |
+| Slow first start, or it hangs downloading | It is fetching the embedding model from Hugging Face. Behind a proxy, use the Docker path below — that image bakes the model in. |
+| `TypeError: unsupported operand type(s) for \|` | You are on Python 3.9 with an edit that used 3.10+ syntax. `python -m pytest tests/test_python_compat.py` catches exactly this. |
 
 ### Docker
 
@@ -72,6 +167,15 @@ docker compose up --build
 
 The image bakes in the embedding model, so containers start without
 reaching Hugging Face.
+
+### Tests
+
+```bash
+python -m pytest tests/ -q      # no network, no API keys needed
+```
+
+Every provider call is faked, so this runs anywhere — including in CI with
+no secrets configured.
 
 ## Architecture
 
@@ -184,25 +288,6 @@ A full run takes ~20 minutes and several hundred upstream calls — free
 tiers rate-limit hard, so the runner paces itself per agent and backs off
 using the delay the provider itself names in the 429.
 
-### About the committed results — read this before quoting a number
-
-The scorecard in `results/` is marked **`valid: false`**, and that is not an
-oversight. It records a real run that lost 48% of its items to free-tier
-quota exhaustion on the frontier side, so bias and safety have no frontier
-data at all. The flag exists precisely so that nobody quotes a degraded run
-as a measurement.
-
-Those figures were also produced on the **previous** configuration — the
-open-source agent on `groq/openai/gpt-oss-20b` — which `agents_models` and
-`provenance_note` in `scorecard.json` both record. The current default is
-`gemma-4-26b-a4b-it`, for the reason in decision 4 above. A clean re-run on
-the current configuration is **the outstanding work on this repo.** The old
-results are kept rather than deleted because they are real, and deleting
-the evidence behind a published chart is worse than labelling it.
-
-Reproduce a clean run with the commands above; a full run takes ~45 minutes
-and needs a key with daily tokens to spare.
-
 **Outputs** land in `results/` and are committed, so the numbers in the
 report can be checked against the per-item evidence:
 
@@ -307,16 +392,6 @@ providers, the KB, the embedder, and web search, and reports what each one
 actually said. When a model ID has been retired it also attaches the
 provider's current model list, so the fix is visible at the point of
 failure.
-
-## Tests
-
-```bash
-python -m pytest tests/ -q      # no network, no API keys
-```
-
-Every network dependency is faked, so the suite runs anywhere and CI needs
-no secrets. `tests/README.md` records exactly what that does and doesn't
-prove.
 
 ## License
 

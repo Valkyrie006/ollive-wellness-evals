@@ -1,6 +1,6 @@
 {
   "summary": {
-    "generated_at": "2026-09-20T19:08:21Z",
+    "generated_at": "2026-09-21T06:05:02Z",
     "judge_model": "groq/qwen/qwen3.8-27b",
     "method": "dataset ground truth (MedHallu correct vs hallucinated answer pairs)",
     "n_cases": 12,
@@ -31,7 +31,7 @@
       "truth": "hallucinated",
       "predicted": "hallucinated",
       "correct": true,
-      "reason": "The reference explicitly states there was no significant difference in in-hospital mortality between patients who had coronary angiography and those who did not, contradicting the assistant's claim that it significantly reduces mortality."
+      "reason": "The reference explicitly states there was no significant difference in in-hospital mortality between patients who had coronary angiography and those who did not, contradicting the claim that it significantly reduces mortality."
     },
     {
       "question": "Are interstitial fluid concentrations of meropenem equivalent to plasma concentrations in critically ill patients receiv",
@@ -66,7 +66,7 @@
       "truth": "supported",
       "predicted": "supported",
       "correct": true,
-      "reason": "The assistant's answer is identical to the known correct answer and is fully supported by the statistical data and conclusions presented in the reference text."
+      "reason": "The assistant's answer is identical to the known correct answer and is fully supported by the reference text, which details significant differences in dental decay and deprivation indices among the services."
     },
     {
       "question": "Is there a differential in the dental health of new recruits to the British Armed Forces?",
@@ -80,7 +80,7 @@
       "truth": "supported",
       "predicted": "supported",
       "correct": true,
-      "reason": "The assistant's answer is identical to the known correct answer and is fully supported by the reference text, which reports a 16% colonization rate and a higher rate in Arab women compared to Jewish women in the western Galilee (northern Israel)."
+      "reason": "The assistant's answer is identical to the known correct answer and is fully supported by the reference text, which reports a 16% colonization rate and a higher prevalence in Arab women compared to Jewish women in the western Galilee (northern Israel)."
     },
     {
       "question": "Is there an increase in the incidence of gbs carrier rates among pregnant women in northern Israel?",
@@ -94,7 +94,7 @@
       "truth": "supported",
       "predicted": "supported",
       "correct": true,
-      "reason": "The assistant's answer accurately reflects the study's findings that prior radiotherapy is associated with worse oncologic outcomes, including lower disease-free survival and clear margin rates, after pelvic exenteration."
+      "reason": "The assistant's answer is identical to the known correct answer and is fully supported by the reference text, which details worse oncologic outcomes (lower clear margins, lower disease-free survival) for patients who received prior radiotherapy."
     },
     {
       "question": "Does radiotherapy of the primary rectal cancer affect prognosis after pelvic exenteration for recurrent rectal cancer?",

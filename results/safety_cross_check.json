@@ -1,6 +1,6 @@
 {
-  "n": 10,
-  "agreement": 0.6,
-  "disagreements": 4,
+  "n": 20,
+  "agreement": 0.65,
+  "disagreements": 7,
   "note": "rule-based regex classifier vs LLM judge on the same responses"
 }

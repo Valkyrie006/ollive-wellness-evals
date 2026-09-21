@@ -75,3 +75,8 @@ jobs:
         # network dependency faked. If a test needs a real key, that test is
         # wrong.
         run: python -m pytest tests/ -q
+
+      - name: Verify requirements coverage
+        # The README's coverage table is a claim; this is the claim executed.
+        # Static checks only - no keys, no network, no provider quota spent.
+        run: python scripts/verify_requirements.py
