@@ -330,25 +330,39 @@ excluded from denominators, a `valid` flag, and a per-tool circuit breaker.
 
 ## What I'd improve with more time
 
-Ordered by value per unit of effort — the two cheapest items capture most of
-it. Full reasoning and a north-star architecture in
-**[ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Two tracks. Full reasoning, plus the defect log the code track is derived
+from, in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+### The evaluation
 
 | # | Build | Effort | Why here |
 |---|---|---|---|
-| 1 | **Frozen baseline + CI gate** | Hours | Stops regressions immediately and needs no new infrastructure — diff each run against a pinned `baseline.json` |
-| 2 | **Failure attribution** | ~1 day | Record *why* an item failed: retrieval missed the chunk, model ignored it, tool errored, or the judge was wrong. Turns "50% hallucination" from a report card into a work queue |
-| 3 | **Ground truth for bias + safety** | Days | Only hallucination has labels today, so two of three axes are unvalidated. ~50 hand-labelled items per axis moves them from indicative to measured |
-| 4 | **Multi-turn eval cases** | Days | Every case is single-turn. Jailbreaks and hallucination drift are strongest *across* turns — the platform measures the easy case |
-| 5 | **Scale with stratification** | Days | n=6 means one item moves a rate 17 points. Tag items easy / medium / adversarial so "failed 50%" is interpretable |
-| 6 | **Second judge + disagreement routing** | ~1 week | Route only judge disagreements to a human — bounds judge error instead of caveating it |
+| 1 | **Failure attribution** | ~1 day | Record *why* an item failed: retrieval missed the chunk, the model ignored it, a tool errored, or the judge was wrong. "50% hallucination" cannot be acted on; "retrieval missed" can. Report card → work queue |
+| 2 | **Frozen baseline + CI gate** | Hours | Diff every run against a pinned `baseline.json`. Turns evals from something a person runs into something that blocks a merge |
+| 3 | **Ground truth for bias + safety** | Days | Only hallucination has labels, so two of three axes are unvalidated and the judge agrees with the rule classifier just 65% on safety. ~50 labelled items per axis moves them from indicative to measured |
+| 4 | **Multi-turn cases** | Days | Every case is single-turn. Jailbreaks and hallucination drift are strongest *across* turns — the platform measures the easy case |
+| 5 | **Stratify by difficulty** | Days | n=6 means one item moves a rate 17 points. "Failed 50%" is uninterpretable without knowing which half |
+| 6 | **Second judge, humans on disagreement only** | ~1 week | Bounds judge error instead of caveating it, and keeps the expensive human step small |
 | 7 | **Separate harness, queue, results store** | ~1 week | Fixes the global guardrail flag, makes runs resumable and parallel, and lets you ask "did this get worse?" rather than only "what is it now?" |
 | 8 | **Online eval on sampled traffic** | ~1 week | Offline sets go stale; online catches drift |
 
-Smaller, worth doing: per-request guardrail config instead of a global flag;
-judge regression fixtures in CI; authentication on the eval endpoints; cost
-telemetry from provider response headers; Redis sessions and a persistent
-vector store.
+### The code
+
+Derived from the eleven defects found while getting to a clean run. Almost
+every one was **silent** — web search returned an empty list, a scorecard
+wrote a wrong label, the report asserted a conclusion its own data
+contradicted. The defect class here is not "crashes", it is "confidently
+wrong output", so the fixes are about the code checking itself.
+
+| # | Change | Why |
+|---|---|---|
+| 1 | **Assertions on its own output** | Extend the n≥5 comparison guard: fail loudly if `valid: true` but an axis is null, or a scorecard has no label. Three of the eleven defects would have been caught at write time |
+| 2 | **Checkpoint each item as it completes** | Results are written only at the end; two runs were lost to a sleeping laptop at ~20 minutes of real quota each |
+| 3 | **Startup health gate** | `/diagnostics` exists but nothing runs it automatically. A broken web search should fail at boot, not corrupt a latency column forty minutes into a run |
+| 4 | **Structured logging with run + request ids** | File logging is what finally exposed a provider's per-day token cap. It should have been built first, not fifteenth |
+| 5 | **Per-request guardrail config** | The toggle is process-global, so an eval run with guardrails off affects live traffic on that server |
+| 6 | **Auth on the eval endpoints** | Debug-gated, not authenticated — anyone who can reach them can spend your quota |
+| 7 | **Redis sessions + persistent vector store** | The actual blockers to running more than one replica |
 
 ## Configuration
 

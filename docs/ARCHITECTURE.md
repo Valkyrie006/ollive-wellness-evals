@@ -1,8 +1,9 @@
 # Architecture: where this is, and where it should go
 
-Three things, in order: how the system works today, what the evaluation
-itself taught us about that design, and what the north-star architecture
-looks like once evals stop being an errand and become infrastructure.
+Four things, in order: how the system works today, what the evaluation
+taught us about that design, what building it taught us about the code, and
+what the north-star architecture looks like once evals stop being an errand
+and become infrastructure.
 
 `DESIGN.md` next door is the decision record — 23 numbered choices with
 their alternatives. This file is the shape of the system and its trajectory.
@@ -177,7 +178,66 @@ run it was written against, false at 22.1s vs 6.6s.
 
 ---
 
-## 3. The missing capability: failure attribution
+## 3. What the build taught us about the code
+
+Eleven defects were found and fixed between the first working version and a
+clean run. The list matters less than the pattern in it.
+
+| # | Defect | How it presented |
+|---|---|---|
+| 1 | `search_web` sent a **POST**; DuckDuckGo answers a POST from a non-browser client with a challenge page | `/diagnostics` said "returned 0 results" while the same query opened fine in a browser |
+| 2 | Retry sleep was **unbounded** | A provider answering "try again in 2h14m30s" turned one request into a hang with no error |
+| 3 | Groq's retry-hint wording was never parsed (only Gemini's was) | Groq limits fell back to a blind 20s/40s/80s backoff that could never clear a per-day cap |
+| 4 | Provider and API key **hardcoded per agent** | The documented `OSS_MODEL` override became a trap: pointing it at a Gemini model still sent the Groq key to Google, failing with `API key not valid` — an error pointing at the wrong cause |
+| 5 | No **circuit breaker** on a failing tool | A dead dependency was retried at full timeout on every loop iteration; ~10s items became ~3-minute ones |
+| 6 | `run_all` assigned `label = f"{agent}/{axis}"`, shadowing its own run-label parameter | A scorecard came out labelled `"frontier/safety"` instead of `"baseline (guardrails off)"` — silently mislabelling which configuration produced the numbers |
+| 7 | The latency finding was **hardcoded** to "favours the open-source agent" | True of the run it was written against; false at 22.1s vs 6.6s |
+| 8 | The guardrail finding read **only one agent** | Reported "no change" and hid the frontier agent going 17% → 0% |
+| 9 | Comparisons were stated with **no minimum sample size** | "Hallucination is a wash, both agents within 0 points" — drawn from 4 items on one side |
+| 10 | The UI rendered `---` as literal dashes | The output guardrail's disclaimer separator showed as text above every disclaimer |
+| 11 | Two UI error hints gave **stale advice** | "Edit `agents/config.py`" after model IDs moved to `.env`; "wait and retry" for a cap that refills daily |
+
+### The pattern: almost every one was silent
+
+None of these threw. Web search returned an empty list. The scorecard wrote
+a wrong label. The report asserted a conclusion its own data contradicted.
+Each was found by *looking*, not by a failure — which means the code's
+defect class is not "crashes" but "confidently wrong output."
+
+Three consequences worth carrying into any similar system:
+
+**Observability first, not fifteenth.** Defect 3 was invisible for an hour
+because the only record of the retry warnings was scrolling past in a
+terminal. Adding a rotating file handler is what exposed the provider's full
+message — `tokens per day (TPD): Limit 200000, Used 199367` — which is the
+difference between "wait a minute" and "come back tomorrow." A long
+evaluation run is unattended by definition.
+
+**Anything asserted in prose that duplicates data is a latent bug.**
+Defects 7, 8 and 9 are all the same mistake: a conclusion written once
+against one dataset, surviving into a run whose numbers had moved. Every
+finding in the report is now computed, and the report refuses to state a
+comparison below five scored items a side.
+
+**Derive, never duplicate.** Defect 4 and defect 6 are both a second copy of
+a fact drifting from the first. Provider and key now derive from the model
+id; pacing derives from the provider rather than the agent name.
+
+### What the code needs next, in order
+
+| # | Change | Why, from the list above |
+|---|---|---|
+| 1 | **Assertions on its own output** | Extend the n≥5 guard: fail loudly if `valid: true` but an axis is null, or if a scorecard has no label. Defects 6, 7 and 9 would have been caught at write time rather than by inspection |
+| 2 | **Checkpoint each item as it completes** | Results are written only at the end. Two runs were lost to a sleeping laptop, ~20 minutes of real quota each |
+| 3 | **Startup health gate** | `/diagnostics` existed but nothing ran it automatically. A broken web search should fail at boot, not corrupt a run's latency column forty minutes in |
+| 4 | **Structured logging with run and request ids** | Logging is currently plain text. Correlating a bad item back to its provider exchange is manual |
+| 5 | **Per-request guardrail config** | The toggle is process-global, so an eval run with guardrails off disables them for live traffic on that server |
+| 6 | **Authentication on the eval endpoints** | They are debug-gated, not authenticated; anyone who can reach them can spend your quota |
+| 7 | **Redis sessions, persistent vector store** | The actual blockers to more than one replica |
+
+---
+
+## 4. The missing capability: failure attribution
 
 The scorecard says *"open-source: 50% hallucination."* That is a number you
 cannot act on, because five different causes produce it and each has a
@@ -202,7 +262,7 @@ report card and becomes a work queue.
 
 ---
 
-## 4. North star
+## 5. North star
 
 ```mermaid
 flowchart LR
@@ -294,7 +354,7 @@ get routed to a person.
 
 ---
 
-## 5. Roadmap — ordered by value per unit of effort
+## 6. Roadmap — ordered by value per unit of effort
 
 The instinct is to build the pipeline first. That is wrong: the two cheapest
 items capture most of the value.
